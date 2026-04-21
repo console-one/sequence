@@ -32,6 +32,7 @@ export type TokenKind =
   | 'IMPORT' | 'FROM' | 'EXPORT'
   | 'LET' | 'REF' | 'SNAPSHOT' | 'PREV'
   | 'CLASS'
+  | 'INDEX' | 'OVER'
   | 'READER'
   // Literals
   | 'STRING' | 'NUMBER' | 'TRUE' | 'FALSE' | 'NULL'
@@ -62,6 +63,7 @@ const KEYWORDS: Record<string, TokenKind> = {
   'import': 'IMPORT', 'from': 'FROM', 'export': 'EXPORT',
   'let': 'LET', 'ref': 'REF', 'snapshot': 'SNAPSHOT', 'prev': 'PREV',
   'class': 'CLASS',
+  'index': 'INDEX', 'over': 'OVER',
   'reader': 'READER',
   'true': 'TRUE', 'false': 'FALSE', 'null': 'NULL',
   'string': 'IDENT', 'number': 'IDENT', 'boolean': 'IDENT',

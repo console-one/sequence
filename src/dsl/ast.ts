@@ -24,6 +24,7 @@ export type Statement =
   | SpreadStatement        // ...expr — expr evaluates to ft text that gets pasted inline
   | WhereStatement         // where (conds) { stmts } — conditional scope gate
   | InStatement            // in path [= backing] [while cond] { stmts } — scoped context
+  | IndexStatement         // index path { over var in set ... where cond ... stmts }
   ;
 
 /**
@@ -100,6 +101,34 @@ export type InStatement = {
   path: string;
   backing?: Expr;
   whileClause?: ConditionExpr[];
+  body: Statement[];
+};
+
+/**
+ * Index statement: `index <anchor> { over <v> in <set> … where <cond> … <body> }`
+ *
+ * Declarative surface for `indexSpec`-constrained schemas. Projects
+ * a tuple space over one or more `over` bindings, optionally filters
+ * it with a `where` clause, and fires the body once per tuple. Paths
+ * and string values in the body may interpolate `{var}` references
+ * that the kernel substitutes at fire time. Unlike `project(...)`
+ * which runs once at mount, an index mounts a *schema* constraint
+ * that re-fires whenever the binding space changes.
+ *
+ * Compiles to:
+ *   seq.mount('schema', anchor, createType('any', [
+ *     indexSpec({ indexedBy: [...], where: [bindFrom(...), ...filterConstraints], body: [...] })
+ *   ]))
+ */
+export type IndexStatement = {
+  kind: 'index';
+  /** Anchor path the index schema mounts at (e.g. `_sessions.active`). */
+  anchor: string;
+  /** Bindings introduced by `over` clauses, in declaration order. */
+  overs: { variable: string; from: string }[];
+  /** Optional `where` filter — implicit AND across clauses. */
+  filter?: ConditionExpr[];
+  /** Body statements — bind/narrow/schema with `{var}` interpolation. */
   body: Statement[];
 };
 

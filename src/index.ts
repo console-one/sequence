@@ -15,6 +15,7 @@ export {
   producedBy, partition, decay, cdfGte, concreteAt,
   version,
   template,
+  ref, derived, impl,
 } from './type';
 export type { Type, Constraint, Expr } from './type';
 

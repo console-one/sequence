@@ -120,6 +120,11 @@ export class Parser {
       return this.parseClassStatement();
     }
 
+    // index anchor { over v in set ... where cond ... body }
+    if (this.at('INDEX')) {
+      return this.parseIndexStatement();
+    }
+
     // in path [= backing] [while cond] { body } — scoped context
     if (this.at('IN')) {
       return this.parseInStatement();
@@ -216,6 +221,61 @@ export class Parser {
     return { kind: 'class', name, params, whileClause, body };
   }
 
+  // ═══ INDEX ═══════════════════════════════════════════════════════════
+
+  /**
+   * Parse: index <anchor> { over <v> in <set> [...] [where <cond>[,<cond>]*] <body> }
+   *
+   * Declarative surface for `indexSpec`-constrained schemas. Mounts a
+   * schema at `anchor` carrying an index constraint that projects a
+   * tuple space over the `over` bindings, filters via `where`, and
+   * fires the body once per tuple (paths/strings get `{var}`
+   * interpolation at fire time).
+   *
+   * All `over` clauses must precede the `where` clause. The body
+   * starts at the first non-over / non-where statement inside the
+   * braces and runs to the closing brace — body statements may be
+   * assigns, narrows, or nested scopes.
+   */
+  private parseIndexStatement(): Statement {
+    this.advance(); // consume 'index'
+    const anchor = this.parsePath();
+    this.expect('LBRACE');
+
+    const overs: { variable: string; from: string }[] = [];
+    while (this.at('OVER')) {
+      this.advance();
+      const variable = this.expect('IDENT').value;
+      this.expect('IN');
+      const from = this.parsePath();
+      overs.push({ variable, from });
+      this.match('SEMICOLON');
+    }
+
+    let filter: import('./ast').ConditionExpr[] | undefined;
+    if (this.at('WHERE')) {
+      this.advance();
+      // Optional parens around the condition list — match reader/fn
+      // where-syntax which accepts both `where cond` and `where (cond, cond)`.
+      const parenthesized = !!this.match('LPAREN');
+      filter = [this.parseCondition()];
+      while (this.match('COMMA')) filter.push(this.parseCondition());
+      if (parenthesized) this.expect('RPAREN');
+      this.match('SEMICOLON');
+    }
+
+    const body: Statement[] = [];
+    while (!this.at('RBRACE') && !this.at('EOF')) {
+      this.skipComments(body);
+      if (this.at('RBRACE')) break;
+      body.push(this.parseStatement());
+      this.match('SEMICOLON');
+    }
+    this.expect('RBRACE');
+
+    return { kind: 'index', anchor, overs, filter, body };
+  }
+
   /**
    * Parse: reader name { key = value, key = value, ... }
    *
@@ -293,6 +353,17 @@ export class Parser {
     if (this.at('NOT')) {
       this.advance();
       return { kind: 'not', clause: this.parseCondition() };
+    }
+
+    // exists(path) — call form. The postfix form `path EXISTS` is
+    // handled below; this branch accepts the function-call reading
+    // which matches how existence is written in most real code.
+    if (this.at('EXISTS')) {
+      this.advance();
+      this.expect('LPAREN');
+      const path = this.parsePath();
+      this.expect('RPAREN');
+      return { kind: 'exists', path };
     }
 
     // EXISTS / path EXISTS
@@ -1008,22 +1079,49 @@ export class Parser {
     }
     let seg = '';
     let lastWasIdent = false;
+    /** Track the column immediately after the last IDENT consumed.
+     *  Compound segments (`p_{reqId}`) require the next `{` to sit
+     *  flush against the preceding IDENT with no whitespace. Without
+     *  this check, a path followed by an open-brace body (e.g.
+     *  `index _sessions.active {`) greedily swallows the body's `{`
+     *  as `{var}` interpolation. The tokenizer strips whitespace
+     *  but keeps line/col on each token; we compare the next
+     *  LBRACE's position against the IDENT's end to disambiguate. */
+    let lastIdentEndLine = -1;
+    let lastIdentEndCol = -1;
     while (true) {
       if (this.at('LBRACE')) {
+        // Only accept this LBRACE as part of the current segment
+        // when it's either the START of a fresh segment (seg === '')
+        // OR directly adjacent to the prior IDENT with no whitespace.
+        if (seg !== '') {
+          const t = this.peek();
+          if (t.line !== lastIdentEndLine || t.col !== lastIdentEndCol) break;
+        }
         this.advance();
         const varName = this.expectIdentLike().value;
         this.expect('RBRACE');
         seg += `{${varName}}`;
         lastWasIdent = false;
       } else if (this.at('IDENT') && !lastWasIdent) {
-        seg += this.advance().value;
+        const t = this.peek();
+        // An IDENT starts a new compound segment piece ONLY if it
+        // sits flush against the prior brace (e.g. `{prefix}_suffix`).
+        // Otherwise it's the next token in the outer parser's world
+        // and should not fold into this segment.
+        if (seg !== '' && (t.line !== lastIdentEndLine || t.col !== lastIdentEndCol)) break;
+        const consumed = this.advance();
+        seg += consumed.value;
         lastWasIdent = true;
+        lastIdentEndLine = consumed.line;
+        lastIdentEndCol = consumed.col + consumed.value.length;
       } else if (seg === '') {
         // First token of a new segment — accept keywords-used-as-
         // idents (policy, user, from, etc) so the caller's error
         // message surfaces at the right place if it really was
         // the wrong token.
-        seg += this.advance().value;
+        const consumed = this.advance();
+        seg += consumed.value;
         return seg;
       } else {
         break;

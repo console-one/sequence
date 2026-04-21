@@ -18,6 +18,8 @@ import {
   equation as equationConstraint,
   derived,
   createType,
+  indexSpec,
+  bindFrom,
 } from '../type';
 import { type BlockOpts } from '../statement';
 import { FT } from '../builder';
@@ -154,6 +156,47 @@ export function walk(
           mounts.push(...sub.mounts);
           comments.push(...sub.comments);
         }
+        break;
+      }
+
+      case 'index': {
+        // Declarative index-constrained schema. The surface:
+        //   index <anchor> {
+        //     over <v> in <set>
+        //     [where <cond>, <cond>...]
+        //     <body-stmts>
+        //   }
+        // compiles to a single schema mount at `anchor` carrying an
+        // `indexSpec` constraint. The `over` clauses become
+        // `bindFrom` entries in `where`, the filter conditions
+        // become additional constraints (implicit AND with the
+        // binds), and the body statements flatten into
+        // `{op, path, value}` records with `{var}` interpolation
+        // preserved verbatim — the kernel substitutes at fire time.
+        const idx = stmt as import('./ast').IndexStatement;
+        const indexedBy = idx.overs.map(o => o.variable);
+        const whereConstraints: Constraint[] = [
+          ...idx.overs.map(o => bindFrom(o.variable, o.from)),
+          ...((idx.filter ?? []).map(toConstraint)),
+        ];
+        const body: Array<{ op: string; path: string; value?: unknown }> = [];
+        for (const bs of idx.body) {
+          if (bs.kind === 'assign' || bs.kind === 'narrow') {
+            body.push({
+              op: 'bind',
+              path: (bs as any).path,
+              value: toValue((bs as any).value, seq),
+            });
+          }
+          // Other body statement kinds are deliberately not supported
+          // yet: schema mounts, nested indexes, and sub-blocks are
+          // open questions on how `{var}` interpolation composes with
+          // them. Keep the surface honest: if you need them, mount
+          // the indexSpec in TS until the semantics land.
+        }
+        mounts.push(seq.mount('schema', idx.anchor, createType('any', [
+          indexSpec({ indexedBy, where: whereConstraints, body }),
+        ])));
         break;
       }
 
@@ -1612,6 +1655,19 @@ function exprToCompareOperand(expr: any): unknown {
   if (!expr) return undefined;
   if (expr.kind === 'literal') return { literal: expr.value };
   if (expr.kind === 'name') return expr.name;
+  // Arithmetic operands emerge from `a ± b` / `a * b` / `a / b` in
+  // DSL condition positions (e.g. `heartbeat > _rt - 100`). The
+  // kernel's evalWithBindings evaluates a `{op, lhs, rhs}` shape
+  // uniformly across the four operators — emit that form so the
+  // same condition AST flows through admission, index filters, and
+  // derived predicates without a parallel branch per site.
+  if (expr.kind === 'binop') {
+    return {
+      op: expr.op,
+      lhs: exprToCompareOperand(expr.lhs),
+      rhs: exprToCompareOperand(expr.rhs),
+    };
+  }
   return exprToPath(expr);
 }
 
