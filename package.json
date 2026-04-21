@@ -48,7 +48,7 @@
     "behavioral-types",
     "ft"
   ],
-  "author": "Andrew Chalmers",
+  "author": "zerotoprod",
   "license": "MIT",
   "devDependencies": {
     "@types/jest": "^29.5.0",
