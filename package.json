@@ -50,6 +50,9 @@
   ],
   "author": "zerotoprod",
   "license": "MIT",
+  "publishConfig": {
+    "access": "restricted"
+  },
   "devDependencies": {
     "@types/jest": "^29.5.0",
     "@types/node": "^20.0.0",
