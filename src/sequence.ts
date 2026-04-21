@@ -3367,6 +3367,50 @@ export class Sequence {
       const suffix = parts.slice(i).join('.');
       return this.resolveImpl(`${target}.${suffix}`, visited);
     }
+    // 4. Compose-lineage fallback. When steps 1-3 find nothing, the
+    //    path has a fn-typed schema but no impl and no explicit
+    //    ref ancestor. Per substrate invariants (types=values,
+    //    compose=meet, narrowing IS inheritance), if the target's
+    //    fn type is a narrowing of some registered impl's fn type
+    //    (the registered param covers the target param), that
+    //    impl is dispatch-compatible and we use it.
+    //
+    //    Ambiguity guard: if multiple registered impls cover the
+    //    target, fall back to typeSpecificity — pick the single
+    //    most-specific covering impl. If two impls tie on
+    //    specificity (unrelated but structurally compatible), the
+    //    kernel cannot disambiguate; return undefined and let the
+    //    caller surface the miss (install-via-ref is the explicit
+    //    remedy).
+    if (selfSchema && selfSchema.kind === 'fn') {
+      const targetParam = selfSchema.constraints.find(c => c.op === 'param')?.args[0] as Type | undefined;
+      if (!targetParam) return undefined;
+      const candidates: { path: string; impl: Function; specificity: number }[] = [];
+      for (const [regPath, regImpl] of this.implRegistry) {
+        if (regPath === path) continue;
+        const regSchema = this.proj.schemas.get(regPath);
+        if (!regSchema || regSchema.kind !== 'fn') continue;
+        const regParam = regSchema.constraints.find(c => c.op === 'param')?.args[0] as Type | undefined;
+        if (!regParam) continue;
+        // Registered param must cover target param — meaning target
+        // is equal to or narrower than the registered impl's input.
+        // That's the narrowing-is-inheritance dispatch relationship.
+        if (!covers(targetParam, regParam)) continue;
+        // Specificity on the param type (not the full fn schema):
+        // fn schemas all have the same 2-constraint structural
+        // count (param + returns), which would leave every
+        // candidate tied. The discriminating information is in
+        // the param's own constraints.
+        candidates.push({ path: regPath, impl: regImpl, specificity: typeSpecificity(regParam) });
+      }
+      if (candidates.length === 0) return undefined;
+      if (candidates.length === 1) return candidates[0].impl;
+      // Pick the most specific covering candidate. A unique max wins;
+      // tied max → ambiguous, return undefined.
+      candidates.sort((a, b) => b.specificity - a.specificity);
+      if (candidates[0].specificity > candidates[1].specificity) return candidates[0].impl;
+      return undefined;
+    }
     return undefined;
   }
 
