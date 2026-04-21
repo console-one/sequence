@@ -262,6 +262,20 @@ describe('commitments — Phase 1 convention', () => {
     expect(seq.get(`${all[0].recordPath}.violateReason`)).toBe('intentional');
   });
 
+  // ═════════════════════════════════════════════════════════════════════
+  // Phase 4 — callstack reader contract
+  // ═════════════════════════════════════════════════════════════════════
+
+  test('installCallstackReader mounts a reader contract at _readers.callstack.*', () => {
+    const seq = new Sequence();
+    const { installCallstackReader } = jest.requireActual('../commitments') as typeof import('../commitments');
+    installCallstackReader(seq);
+    expect(seq.get('_readers.callstack.source')).toBe(`${COMMITMENT_PREFIX}.*`);
+    expect(seq.get('_readers.callstack.mode')).toBe('stable');
+    expect(seq.get('_readers.callstack.depth')).toBe(3);
+    expect(seq.get('_readers.callstack.render')).toBe('callstack');
+  });
+
   test('multiple fn-kind invocations leave an audit trail of distinct commitments', () => {
     const seq = new Sequence();
     seq.mount('schema', 'inc', createType('fn', [

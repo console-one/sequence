@@ -64,6 +64,7 @@ export {
   commitmentRecordSchema, installCommitmentSchema,
   electCommitment, fulfillCommitment, revokeCommitment, violateCommitment,
   readCommitment, commitments, openCommitments,
+  installCallstackReader,
 } from './commitments';
 export type { CommitmentStatus, ElectCommitmentOpts, CommitmentHandle, CommitmentRecord } from './commitments';
 

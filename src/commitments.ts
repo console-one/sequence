@@ -289,3 +289,27 @@ export function commitments(seq: Sequence, statusFilter?: CommitmentStatus): Com
 export function openCommitments(seq: Sequence): CommitmentRecord[] {
   return commitments(seq, 'pending');
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// PHASE 4 — callstack reader contract
+// ═══════════════════════════════════════════════════════════════════════
+
+/**
+ * Install a reader contract at `_readers.callstack.*` that projects
+ * `_commitments.*` as a document. Consumers (UI panels, debuggers,
+ * audit dashboards) call `hoistForReader(seq, 'callstack')` and get
+ * the substrate's live call stack as ft text.
+ *
+ * Convention: the reader is scoped to the commitment records (source
+ * `_commitments.*`), stable mode (no history), depth 3 to cover the
+ * record's field set (head + control + status + metadata). Callers
+ * can remount with different scopes for filtered views — e.g.
+ * "only open frames" by post-filtering on status='pending' at the
+ * render site.
+ */
+export function installCallstackReader(seq: Sequence): void {
+  seq.mount('bind', '_readers.callstack.source', `${COMMITMENT_PREFIX}.*`);
+  seq.mount('bind', '_readers.callstack.mode',   'stable');
+  seq.mount('bind', '_readers.callstack.depth',  3);
+  seq.mount('bind', '_readers.callstack.render', 'callstack');
+}
