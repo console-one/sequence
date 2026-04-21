@@ -714,7 +714,7 @@ export function concreteAt(path: string, t: number | Expr): Constraint {
 
 /**
  * Version: declares the cap's policy version. Consumers can read
- * `_caps_version.{capPath}` to know which version of a cap they are
+ * `_caps_version.{toolPath}` to know which version of a cap they are
  * running. Admission requires the version to be present on writes
  * that replace the cap's fn schema, so hot-reload always increments.
  *

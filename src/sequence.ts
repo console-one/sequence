@@ -131,7 +131,7 @@ export type Projection = {
 
 /** A capability invocation that the Sequence needs but cannot execute internally. */
 export type PendingInvocation = {
-  capId: string;
+  toolId: string;
   args: unknown[];
   targetPath: string;
 };
@@ -179,7 +179,7 @@ export type MountResult = {
    *  reject. Fire-and-forget callers ignore it; imperative callers
    *  that want to await the cap's outcome use this to bridge JS
    *  Promise semantics with the kernel's async-cap result mount. */
-  capCompletion?: Promise<{
+  toolCompletion?: Promise<{
     ok: boolean;
     output?: unknown;
     error?: string;
@@ -449,7 +449,7 @@ export class Sequence {
   private globDepIndex = new Map<string, Set<string>>();
   /** Stash for the latest async cap completion's Promise — picked up
    *  by mount()'s result builder so imperative callers can await. */
-  private pendingCapCompletion: Promise<{ ok: boolean; output?: unknown; error?: string; latencyMs: number }> | undefined;
+  private pendingToolCompletion: Promise<{ ok: boolean; output?: unknown; error?: string; latencyMs: number }> | undefined;
   /** Re-entry guard for runIndexConstraints. Class bodies mount
    *  their per-tuple entries via this.mount(), which re-enters
    *  mount() and would otherwise trigger another index-constraint
@@ -955,8 +955,8 @@ export class Sequence {
     // Re-score: manage working set if a memory budget is configured
     const ws = this.rescoreWorkingSet(time);
 
-    const capCompletion = this.pendingCapCompletion;
-    this.pendingCapCompletion = undefined;
+    const toolCompletion = this.pendingToolCompletion;
+    this.pendingToolCompletion = undefined;
     const result: MountResult = {
       ok: true, blockSeq,
       invalidated: fx.invalidated.length > 0 ? fx.invalidated : undefined,
@@ -968,7 +968,7 @@ export class Sequence {
       promoted: ws.promoted.length > 0 ? ws.promoted : undefined,
       author: blockOpts?.author,
       nextWake: this.nextWake(),
-      capCompletion,
+      toolCompletion,
     };
     // Notify observers — but only on the outermost mount so a
     // single cascade produces one observer callback per external
@@ -1373,7 +1373,7 @@ export class Sequence {
         const fn = this.implRegistry.get(fnId);
         if (!fn) {
           if (this.proj.capabilities.has(fnId)) {
-            pendingInvocations.push({ capId: fnId, args, targetPath: dp });
+            pendingInvocations.push({ toolId: fnId, args, targetPath: dp });
           }
           return;
         }
@@ -2167,7 +2167,7 @@ export class Sequence {
   //
   // Preconditions the kernel relies on:
   //   - The cap's fn-typed schema is present (carries param + returns).
-  //   - The impl is registered (implRegistry.has(capPath)) — without
+  //   - The impl is registered (implRegistry.has(toolPath)) — without
   //     it we can't fire, so we also can't safely wire.
   //   - The cap impl is a pure function of its declared param type.
   //     Any `seq.get()` inside the closure is a hidden dependency the
@@ -2194,9 +2194,9 @@ export class Sequence {
       // registered in this process. A cap without an impl can't
       // be fired here, so we don't wire against it.
       const matches: Array<{ path: string; inputPaths: string[] }> = [];
-      for (const [capPath, capSchema] of this.proj.schemas) {
+      for (const [toolPath, capSchema] of this.proj.schemas) {
         if (capSchema.kind !== 'fn') continue;
-        if (!this.implRegistry.has(capPath)) continue;
+        if (!this.implRegistry.has(toolPath)) continue;
         const rc = constraintOf(capSchema, 'returns');
         const pc = constraintOf(capSchema, 'param');
         if (!rc || !pc) continue;
@@ -2205,15 +2205,15 @@ export class Sequence {
         if (paramType.kind !== 'object') continue;
         if (!covers(gapSchema, outputType)) continue;
         const inputPaths = properties(paramType).filter(p => !p.optional).map(p => p.key);
-        matches.push({ path: capPath, inputPaths });
+        matches.push({ path: toolPath, inputPaths });
       }
 
       if (matches.length !== 1) continue;
-      const { path: capPath, inputPaths } = matches[0];
+      const { path: toolPath, inputPaths } = matches[0];
 
       // Install the derived constraint + dep edges. The constraint
       // args follow the derived convention: [fnId, ...argPaths].
-      const newConstraint: Constraint = { op: 'derived', args: [capPath, ...inputPaths] };
+      const newConstraint: Constraint = { op: 'derived', args: [toolPath, ...inputPaths] };
       const newSchema: Type = { ...gapSchema, constraints: [...gapSchema.constraints, newConstraint] };
       this.proj.schemas.set(gapPath, newSchema);
       for (const p of inputPaths) {
@@ -2358,14 +2358,14 @@ export class Sequence {
                   // the result. The mount fires a new block (not
                   // part of the current cascade) so downstream
                   // deps and deltas see it as a separate event.
-                  // The Promise is ALSO stashed at this.pendingCapCompletion
+                  // The Promise is ALSO stashed at this.pendingToolCompletion
                   // so mount()'s result builder can surface it on
-                  // MountResult.capCompletion — imperative callers
+                  // MountResult.toolCompletion — imperative callers
                   // await this to bridge JS Promise semantics with
                   // the substrate's async cap result mount.
                   const resultPath = `${entry.path}.result`;
                   const errorPath = `${entry.path}.error`;
-                  this.pendingCapCompletion = (output as Promise<unknown>).then((resolved) => {
+                  this.pendingToolCompletion = (output as Promise<unknown>).then((resolved) => {
                     const lat = Date.now() - startTs;
                     if (resolved !== undefined) {
                       this.mount('bind', resultPath, resolved);
@@ -2439,7 +2439,7 @@ export class Sequence {
             this.proj.values.set('_caps', [...this.proj.capabilities.keys()]);
           }
           // Surface the cap's policy version (R11) at a stable
-          // _caps_version.{capPath} address so consumers can read
+          // _caps_version.{toolPath} address so consumers can read
           // which version of a cap they are running. Hot-reload of
           // the schema replaces the stored version with the new one.
           if (type.kind === 'fn') {

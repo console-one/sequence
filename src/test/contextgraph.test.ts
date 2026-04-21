@@ -339,8 +339,8 @@ describe('type indexing', () => {
     seq.mount('schema', 'tools.filter', FT.fn({ input: inputType, output: FT.string() }));
     seq.mount('cap', 'tools.filter', true);
     // Find capabilities whose input composes with our query type
-    const caps = [...seq.projection.capabilities.keys()].filter(capId => {
-      const capType = seq.typeAt(capId);
+    const caps = [...seq.projection.capabilities.keys()].filter(toolId => {
+      const capType = seq.typeAt(toolId);
       if (!capType || capType.kind !== 'fn') return false;
       const paramC = capType.constraints.find(c => c.op === 'param');
       if (!paramC) return false;

@@ -16,7 +16,7 @@
  *
  * Calling convention: the cap impl is invoked with a single object arg
  * whose shape matches the param type (same convention as explicit
- * `mount('bind', capPath, inputObject)`). The cascade packs values read
+ * `mount('bind', toolPath, inputObject)`). The cascade packs values read
  * from the input paths into that object keyed by the param property
  * names.
  */
