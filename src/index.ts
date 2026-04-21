@@ -55,3 +55,15 @@ export type { ReaderConfig, RenderResult, ScoredCluster, Cluster } from './runti
 export { rotate } from './rotation';
 export type { RotateOpts, RotateResult } from './rotation';
 
+// Commitments — the substrate's write-side primitive. Cascade fixed
+// point's terminal action elects commitments to external work; open
+// commitments at `_commitments.*` ARE the substrate's call stack.
+// See specs/docs/COMMITMENTS.md.
+export {
+  COMMITMENT_PREFIX,
+  commitmentRecordSchema, installCommitmentSchema,
+  electCommitment, fulfillCommitment, revokeCommitment, violateCommitment,
+  readCommitment, commitments, openCommitments,
+} from './commitments';
+export type { CommitmentStatus, ElectCommitmentOpts, CommitmentHandle, CommitmentRecord } from './commitments';
+
