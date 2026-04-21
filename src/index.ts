@@ -1,0 +1,56 @@
+// Kernel
+export { Sequence, partitionOf, partitionOfType } from './sequence';
+export type { Projection, MountResult, PendingInvocation, Partition } from './sequence';
+
+// Type system
+export {
+  createType, literal, property, element, arrayLength,
+  constraintOf, constraintsOf, literalValue, properties,
+  isAny, isNever, ANY,
+  eq, neq, gt, gte, lt, lte, exists, notExists,
+  or, and, not, regex, between, oneOf, contains, matchesType, countGte,
+  bindFrom, indexSpec, law,
+  add, mul, call, pm, computable,
+  key, responsePolicy, min, max, distribution, preserves, param, returns, endpoint, auth,
+  producedBy, partition, decay, cdfGte, concreteAt,
+  version,
+  template,
+} from './type';
+export type { Type, Constraint, Expr } from './type';
+
+// Composition / lattice
+export {
+  compose, covers, check, backwardInfer, selectFirstBranch,
+  typeSpecificity, evaluateExpr, exprConcreteness,
+  cdf, posteriorPredictive, conjugateUpdate,
+  planFeasibility,
+} from './compose';
+export type { Gap, Follow, CheckResult, DependencyModel, StepDistribution, PlanFeasibilityTrace } from './compose';
+
+// Statements
+export type { MountEntry, Block, BlockOpts } from './statement';
+
+// Builder (FT.* convenience API)
+export { FT } from './builder';
+
+// Hoist (emit)
+export { hoist, hoistForReader } from './hoist';
+
+// DSL pipeline
+export { receive } from './dsl/walker';
+export type { ImportResolver } from './dsl/walker';
+
+// Environment
+export { loadEnv } from './env';
+export type { EnvOpts } from './env';
+
+// Render pipeline
+export { renderForReader } from './runtime/render';
+export type { ReaderConfig, RenderResult, ScoredCluster, Cluster } from './runtime/render';
+
+// Rotation — lock-holder moves a range to a destination with a
+// transparent redirect. The compression/federation/retention
+// primitive, applied recursively at any tier.
+export { rotate } from './rotation';
+export type { RotateOpts, RotateResult } from './rotation';
+

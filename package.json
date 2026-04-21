@@ -1,0 +1,63 @@
+{
+  "name": "@console-one/sequence",
+  "version": "0.1.0",
+  "description": "Append-only behavioral type kernel. Types and values are the same continuum; mount a fact, see what's missing (gaps), fill gaps through compose, capabilities activate. One operation (mount), one data structure (Sequence), one protocol (ft text in/out).",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/console-one/sequence.git"
+  },
+  "bugs": {
+    "url": "https://github.com/console-one/sequence/issues"
+  },
+  "homepage": "https://github.com/console-one/sequence#readme",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./dsl": {
+      "types": "./dist/dsl/index.d.ts",
+      "import": "./dist/dsl/index.js",
+      "default": "./dist/dsl/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "specs",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "test": "jest",
+    "lint": "tsc --noEmit",
+    "prepublishOnly": "npm run clean && npm run build && npm test"
+  },
+  "keywords": [
+    "sequence",
+    "kernel",
+    "append-only",
+    "cascade",
+    "compose",
+    "lattice",
+    "behavioral-types",
+    "ft"
+  ],
+  "author": "Andrew Chalmers",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/jest": "^29.5.0",
+    "@types/node": "^20.0.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.2.0",
+    "typescript": "^5.5.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
