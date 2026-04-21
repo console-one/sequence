@@ -21,6 +21,8 @@ import {
   commitments,
   openCommitments,
 } from '../commitments';
+import { createType, property, param, returns } from '../type';
+import { FT } from '../builder';
 
 describe('commitments — Phase 1 convention', () => {
   test('installCommitmentSchema mounts the record schema at _commitments.*', () => {
@@ -168,6 +170,114 @@ describe('commitments — Phase 1 convention', () => {
   test('readCommitment returns undefined when the id does not exist', () => {
     const seq = new Sequence();
     expect(readCommitment(seq, 'nonexistent')).toBeUndefined();
+  });
+
+  // ═════════════════════════════════════════════════════════════════════
+  // Phase 2 — fn-kind dispatch auto-elects commitments
+  // ═════════════════════════════════════════════════════════════════════
+
+  test('sync fn-kind invocation auto-elects a fulfilled commitment record', () => {
+    const seq = new Sequence();
+    seq.mount('schema', 'double', createType('fn', [
+      param(createType('object', [])),
+      returns(createType('object', [])),
+    ]));
+    seq.mount('bind', 'double', (input: any) => ({ value: input.value * 2 }));
+    seq.mount('bind', 'double', { value: 21 });
+
+    // Existing behavior preserved: .input / .result lands.
+    expect(seq.get('double.result')).toEqual({ value: 42 });
+
+    // New: a commitment record was elected and fulfilled in the same
+    // tick for the sync invocation. The call is now part of the
+    // substrate's audit trail.
+    const all = commitments(seq);
+    expect(all).toHaveLength(1);
+    const c = all[0];
+    expect(c.typeRef).toBe('double');
+    expect(c.holder).toBe('double');
+    expect(c.head).toBe('double.result');
+    expect(c.status).toBe('fulfilled');
+  });
+
+  test('async fn-kind invocation elects a pending commitment; fulfills on promise resolve', async () => {
+    const seq = new Sequence();
+    seq.mount('schema', 'fetch', createType('fn', [
+      param(createType('object', [])),
+      returns(createType('object', [])),
+    ]));
+    let resolvePromise!: (v: any) => void;
+    const deferred = new Promise<any>((r) => { resolvePromise = r; });
+    seq.mount('bind', 'fetch', (_: any) => deferred);
+
+    const r = seq.mount('bind', 'fetch', { url: 'https://example.com' });
+
+    // While the impl's promise is unresolved, commitment status is pending.
+    const pendingList = openCommitments(seq);
+    expect(pendingList).toHaveLength(1);
+    const pendingRecord = pendingList[0];
+    expect(pendingRecord.status).toBe('pending');
+    expect(pendingRecord.head).toBe('fetch.result');
+
+    // Resolve the impl.
+    resolvePromise({ ok: 1 });
+    await r.toolCompletion;
+
+    // Commitment transitioned to fulfilled.
+    const finalRecord = readCommitment(seq, pendingRecord.id);
+    expect(finalRecord?.status).toBe('fulfilled');
+    expect(seq.get('fetch.result')).toEqual({ ok: 1 });
+  });
+
+  test('async fn-kind impl that rejects transitions commitment to violated with reason', async () => {
+    const seq = new Sequence();
+    seq.mount('schema', 'flaky', createType('fn', [
+      param(createType('object', [])),
+      returns(createType('object', [])),
+    ]));
+    seq.mount('bind', 'flaky', (_: any) => Promise.reject(new Error('upstream timeout')));
+
+    const r = seq.mount('bind', 'flaky', { input: 1 });
+    await r.toolCompletion;
+
+    const all = commitments(seq);
+    expect(all).toHaveLength(1);
+    expect(all[0].status).toBe('violated');
+    expect(seq.get(`${all[0].recordPath}.violateReason`)).toBe('upstream timeout');
+  });
+
+  test('sync fn-kind impl that throws transitions commitment to violated with reason', () => {
+    const seq = new Sequence();
+    seq.mount('schema', 'boom', createType('fn', [
+      param(createType('object', [])),
+      returns(createType('object', [])),
+    ]));
+    seq.mount('bind', 'boom', (_: any) => { throw new Error('intentional'); });
+
+    seq.mount('bind', 'boom', { input: 1 });
+
+    const all = commitments(seq);
+    expect(all).toHaveLength(1);
+    expect(all[0].status).toBe('violated');
+    expect(seq.get(`${all[0].recordPath}.violateReason`)).toBe('intentional');
+  });
+
+  test('multiple fn-kind invocations leave an audit trail of distinct commitments', () => {
+    const seq = new Sequence();
+    seq.mount('schema', 'inc', createType('fn', [
+      param(createType('object', [])),
+      returns(createType('object', [])),
+    ]));
+    seq.mount('bind', 'inc', (i: any) => ({ n: i.n + 1 }));
+
+    seq.mount('bind', 'inc', { n: 1 });
+    seq.mount('bind', 'inc', { n: 5 });
+    seq.mount('bind', 'inc', { n: 10 });
+
+    const all = commitments(seq);
+    expect(all).toHaveLength(3);
+    expect(all.every(c => c.status === 'fulfilled')).toBe(true);
+    expect(all.every(c => c.typeRef === 'inc' && c.head === 'inc.result')).toBe(true);
   });
 
   test('terminal status does not transition further (caller-side discipline; substrate accepts)', () => {

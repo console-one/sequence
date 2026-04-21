@@ -2337,6 +2337,32 @@ export class Sequence {
             const paramConstraint = schema.constraints.find(c => c.op === 'param');
             const inputType = paramConstraint ? paramConstraint.args[0] as Type : null;
             if (!inputType || check(inputType, entry.value, entry.path).ok) {
+              // Elect a commitment record for this invocation. Per
+              // specs/docs/COMMITMENTS.md, every fn-typed invocation
+              // is a write-lease — the impl is the holder committing
+              // to produce a result at .result (the head). Sync
+              // impls fulfill at tick-end; async impls fulfill when
+              // the Promise settles; throws → violate.
+              //
+              // The commitment record's fields are written as
+              // side-effect entries on the outer block (same pattern
+              // as `.input`/`.result` below), so they land atomically
+              // and appear in the block log for audit.
+              const commitmentId = `c_${this.nextBlockSeq}_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+              const commitmentPath = `_commitments.${commitmentId}`;
+              const head = `${entry.path}.result`;
+              const writeCommitmentField = (field: string, value: unknown) => {
+                const e: MountEntry = { op: 'bind', path: `${commitmentPath}.${field}`, value };
+                this.proj.values.set(e.path, value);
+                if (this.currentBlockEntries) this.currentBlockEntries.push(e);
+              };
+              writeCommitmentField('typeRef', entry.path);
+              writeCommitmentField('holder', entry.path);
+              writeCommitmentField('head', head);
+              writeCommitmentField('control', `${commitmentPath}.control`);
+              writeCommitmentField('status', 'pending');
+              this.mutationCount++;
+
               // Record the input and result as REAL log entries on
               // the containing block. Two consequences:
               //   1. `getAt('{fnPath}.input', invocationSeq)` reads
@@ -2363,27 +2389,38 @@ export class Sequence {
                   // MountResult.toolCompletion — imperative callers
                   // await this to bridge JS Promise semantics with
                   // the substrate's async cap result mount.
-                  const resultPath = `${entry.path}.result`;
+                  const resultPath = head;
                   const errorPath = `${entry.path}.error`;
                   this.pendingToolCompletion = (output as Promise<unknown>).then((resolved) => {
                     const lat = Date.now() - startTs;
                     if (resolved !== undefined) {
                       this.mount('bind', resultPath, resolved);
                     }
+                    this.mount('bind', `${commitmentPath}.status`, 'fulfilled');
                     return { ok: true, output: resolved, latencyMs: lat };
                   }, (err: any) => {
                     const lat = Date.now() - startTs;
                     const msg = err?.message ?? String(err);
                     this.mount('bind', errorPath, msg);
+                    this.mount('bind', `${commitmentPath}.violateReason`, msg);
+                    this.mount('bind', `${commitmentPath}.status`, 'violated');
                     return { ok: false, error: msg, latencyMs: lat };
                   });
                 } else if (output !== undefined) {
-                  const resultEntry: MountEntry = { op: 'bind', path: `${entry.path}.result`, value: output };
+                  const resultEntry: MountEntry = { op: 'bind', path: head, value: output };
                   this.applyEntry(resultEntry);
                   if (this.currentBlockEntries) this.currentBlockEntries.push(resultEntry);
+                  writeCommitmentField('status', 'fulfilled');
+                } else {
+                  // Sync impl returned undefined (void-typed). Still
+                  // a fulfillment — the commitment is considered
+                  // complete once the impl returns without throw.
+                  writeCommitmentField('status', 'fulfilled');
                 }
               } catch (e: any) {
                 this.proj.values.set(`${entry.path}.error`, e.message);
+                writeCommitmentField('violateReason', e.message);
+                writeCommitmentField('status', 'violated');
               }
               break;
             }
