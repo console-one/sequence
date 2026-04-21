@@ -68,28 +68,45 @@ no externalities to wait on, every gap closed by internal narrowing.
 A turn that elects N commitments has N new outward dependencies the
 substrate is now tracking.
 
-## Open commitments = the call stack
+## Open commitments are the substrate's outstanding work
 
-The set of open commitments at any moment IS the substrate's call
-stack:
+The set of open commitments at any moment is the durable record of
+work the substrate has elected to but has not settled. The records
+ARE the state — not a mirror of it, not an observability plane
+alongside it. One source of truth, queried as ordinary type-state:
 
-- `seq.keys('_commitments')` returns the stack frame IDs — every
-  outstanding piece of delegated work.
+- `seq.keys('_commitments')` returns every outstanding commitment's ID.
 - `seq.get('_commitments.{id}.head')` returns the current state of
-  that frame — heartbeat-fresh, partial result, or whatever the
-  holder has written so far.
-- `seq.get('_commitments.{id}.holder')` returns who's responsible.
-- `seq.get('_commitments.{id}.deadline')` returns when it's due.
-- `seq.get('_commitments.{id}.contingencies')` returns what inputs
-  the commitment is waiting on (its parent frame's concretizations
-  it can't proceed without).
+  whatever the holder has written — heartbeat-fresh, partial result,
+  or not-yet-anything.
+- `seq.get('_commitments.{id}.holder')` returns who has the write-lease.
+- `seq.get('_commitments.{id}.deadline')` returns when the lease must
+  fulfill.
+- `seq.get('_commitments.{id}.contingencies')` returns the paths the
+  commitment is waiting on.
 
-The stack trace of any computation in flight is queryable as
-ordinary type-state. No external debugger; no separate observability
-plane. The substrate IS the runtime; commitments ARE the frames;
-the cascade IS the scheduler.
+This structure LOOSELY RESEMBLES a traditional process's call stack
+— parent commitment waiting on child commitments to fulfill, a tree
+of in-flight work visible from above. The resemblance is a reading
+aid, not an equivalence. Unlike a call stack:
 
-## Stack symmetry — in-process and external delegations are isomorphic
+- Commitments are **durable** — they persist across process
+  restarts, live in the block log, survive federation.
+- Commitments are **DAG-shaped**, not strictly nested — a commitment
+  can be contingent on multiple siblings, and a sibling can
+  contribute to multiple parents.
+- Commitments are **not LIFO** — fulfillment order is independent
+  of election order.
+- Commitments **outlive fulfillment** — terminal records stay as
+  audit trail, not popped.
+- Commitments are **substrate-wide**, not process-local — federation
+  crosses them naturally.
+
+Call a set of open commitments an "outstanding work set" or just the
+commitments. Don't call it a call stack; don't name identifiers after
+call stacks. The analogy is explanatory, not structural.
+
+## Symmetry across delegation kinds — in-process and external are isomorphic
 
 A function call inside the same JS heap and a tool call to a remote
 service look IDENTICAL through the commitment primitive. The only
@@ -108,9 +125,10 @@ deadlines with various reliability priors, all updating their heads.
 
 This is the load-bearing claim of the commitment primitive: **code-
 level computation is the degenerate fast case of the same operation
-that orchestrates remote work**. Your stack trace and your distributed
-trace are the same artifact, queried the same way, against the same
-substrate.
+that orchestrates remote work**. The record of in-flight work at a
+single process and the record spanning a federation are the same
+artifact, queried the same way, against the same substrate — not
+separate observability surfaces that happen to line up.
 
 ## What this collapses
 
@@ -173,8 +191,8 @@ at each step.
 
 1. Add `commitment` builder to `type.ts` that produces a record
    schema with the eight fields. Export.
-2. Add `_commitments.*` partition convention. Document the path
-   prefix as the substrate's call-stack root.
+2. Add `_commitments.*` path convention. Document the prefix as
+   the canonical root for the substrate's commitment records.
 3. Write coverage tests in the kernel: enumerate, query, audit
    commitment records on a sequence with manually-mounted
    commitments. No behavior change yet.
@@ -218,12 +236,12 @@ at each step.
 
 ### Phase 4 — observability
 
-11. Add a `_callstack` reader contract that projects all open
-    commitments as a hierarchical document — root commitments at
-    the top, contingency-graph children nested below. Same render
-    machinery as any other reader.
+11. Add a `_readers.commitments.*` reader contract that projects
+    all commitment records as a hierarchical document — root
+    commitments at the top, contingency-graph children nested
+    below. Same render machinery as any other reader.
 12. Document the convention: any product debugger / observability
-    UI reads `_callstack` for the live execution stack.
+    UI reads `commitments` for the substrate's outstanding work.
 
 ## Risks
 
@@ -239,9 +257,9 @@ at each step.
 
 - **Snapshot/replay determinism**. Commitment records carry holder
   identities and deadline timestamps. Snapshot must capture both
-  faithfully so a replayed sequence sees the same call stack. The
-  block-log structure already preserves this; verify the convention
-  doesn't introduce non-determinism.
+  faithfully so a replayed sequence sees the same outstanding work
+  set. The block-log structure already preserves this; verify the
+  convention doesn't introduce non-determinism.
 
 - **Cancellation cascading**. Cancelling a parent commitment should
   propagate to its children (any commitments contingent on the
@@ -277,8 +295,8 @@ at each step.
   cross sequences naturally. A federated commitment has a holder
   on a different sequence; the head still reads the same way.
   The unification across the five tiers (Browser → User Session →
-  Org Scheduler → User Session → Browser) is one connected call
-  stack, queryable end-to-end.
+  Org Scheduler → User Session → Browser) is one connected set of
+  outstanding commitments, queryable end-to-end.
 
 ## Reading order for someone arriving at the substrate
 

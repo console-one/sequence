@@ -291,25 +291,29 @@ export function openCommitments(seq: Sequence): CommitmentRecord[] {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// PHASE 4 — callstack reader contract
+// PHASE 4 — commitments reader contract
 // ═══════════════════════════════════════════════════════════════════════
 
 /**
- * Install a reader contract at `_readers.callstack.*` that projects
- * `_commitments.*` as a document. Consumers (UI panels, debuggers,
- * audit dashboards) call `hoistForReader(seq, 'callstack')` and get
- * the substrate's live call stack as ft text.
+ * Install a reader contract at `_readers.commitments.*` that projects
+ * `_commitments.*` as a document. Consumers call
+ * `hoistForReader(seq, 'commitments')` to render the substrate's
+ * commitment records as ft text.
  *
- * Convention: the reader is scoped to the commitment records (source
- * `_commitments.*`), stable mode (no history), depth 3 to cover the
- * record's field set (head + control + status + metadata). Callers
- * can remount with different scopes for filtered views — e.g.
- * "only open frames" by post-filtering on status='pending' at the
- * render site.
+ * Not a "call stack" — commitments are durable, DAG-shaped, substrate-
+ * wide, queryable, outlive their fulfillment as audit records. The
+ * read view is just a projection over the same type-state any other
+ * reader would project.
+ *
+ * Scope: the reader reads the commitment records (source
+ * `_commitments.*`), stable mode, depth 3 to cover the record's
+ * field set (head + control + status + metadata). Callers can
+ * remount with different scopes for filtered views — e.g. open-
+ * only by post-filtering on `status='pending'` at the render site.
  */
-export function installCallstackReader(seq: Sequence): void {
-  seq.mount('bind', '_readers.callstack.source', `${COMMITMENT_PREFIX}.*`);
-  seq.mount('bind', '_readers.callstack.mode',   'stable');
-  seq.mount('bind', '_readers.callstack.depth',  3);
-  seq.mount('bind', '_readers.callstack.render', 'callstack');
+export function installCommitmentsReader(seq: Sequence): void {
+  seq.mount('bind', '_readers.commitments.source', `${COMMITMENT_PREFIX}.*`);
+  seq.mount('bind', '_readers.commitments.mode',   'stable');
+  seq.mount('bind', '_readers.commitments.depth',  3);
+  seq.mount('bind', '_readers.commitments.render', 'commitments');
 }
