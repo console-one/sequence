@@ -114,64 +114,62 @@ export class PathMap<V> extends Map<string, V> {
 }
 
 /**
- * Per-path record in the unified constraint store.
- *
- * Claims are grouped by OWNER — the lifecycle holder of the
- * narrowing. An owner is a synthetic id that names who can later
- * replace or release the claim:
- *
- *   `bind:${author}`        — author's overwriteable bind value
- *   `schema:${author}`      — author's schema declaration
- *   `commitment:${id}`      — held by an active commitment
- *   `kernel`                — kernel-internal mounts (_rt, _exec, ...)
- *
- * The slot's effective region is the meet (intersection) of every
- * owner's claims. The kernel rejects writes whose meet would be
- * `never`. When an owner releases (e.g. a commitment is revoked),
- * `releaseOwner` drops their claims and the aggregate recomputes —
- * other owners' claims persist.
- *
- * Segments aren't pre-decided per kind; they're declared by claim
- * mounts and grow via projection conjunctions promoted by the
- * cascade (LEARNING_AS_COMPRESSION.md).
+ * A patch applied to a Cell — the unit of update along the cell's
+ * local temporal dimension. The cell's state at any seq N is the
+ * compose-fold of every block 0..N's constraint payload.
  */
-export type ConstraintNode = {
-  kind?: import('./type').Kind;
-  claims: Map<string, Constraint[]>;
-  meta?: import('./type').TypeMeta;
+export type CellBlock = {
+  readonly seq: number;            // local seq within this cell
+  readonly op: 'narrow' | 'unbind' | 'splice';
+  readonly by: string;             // path of the cell that authored this block
+  readonly commitId: number;       // global commit this block belongs to
+  readonly time: number;           // wall-clock at mount
+  readonly constraints?: readonly Constraint[];  // for narrow/unbind
+  readonly spliceTo?: string;      // for splice: the cellId we redirect to
 };
 
-/** Build a synthetic owner id for a bind by `author`. Two writes
- *  from the same author via different ops (bind vs schema) own
- *  separate slots and don't collide. */
-export function bindOwner(author: string | undefined): string {
-  return `bind:${author ?? 'anon'}`;
-}
-
-/** Build a synthetic owner id for a schema mount by `author`. */
-export function schemaOwner(author: string | undefined): string {
-  return `schema:${author ?? 'anon'}`;
-}
-
-/** Build a synthetic owner id for a commitment-held claim. */
-export function commitmentOwner(commitmentId: string): string {
-  return `commitment:${commitmentId}`;
-}
-
-/** Default owner for kernel-internal bind writes (sidecar paths
- *  like _rt, _exec, _blocks that aren't author-owned). */
-const KERNEL_BIND_OWNER = 'bind:kernel';
-
-/** Default owner for kernel-internal schema writes. */
-const KERNEL_SCHEMA_OWNER = 'schema:kernel';
+/**
+ * A Cell — a region of the substrate's lattice.
+ *
+ * The cell's source of truth is `blocks`. Everything else (constraints,
+ * kind, meta) is a projection of those blocks at the cell's current
+ * seq. Ownership/lifecycle is NOT a separate dimension — it lives in
+ * the constraints themselves (via `producedBy`, `ref`, `law` etc that
+ * name other cells). Vacating an upstream cell propagates through the
+ * cascade like any other state change.
+ */
+export type Cell = {
+  readonly id: string;
+  parentId: string | null;         // null = root cell of the sequence
+  segment: string;                 // this cell's name within parent ('' for root)
+  blocks: CellBlock[];             // patches in local-seq order — source of truth
+  // Projections — derived from blocks. Cached for read speed.
+  constraints: Constraint[];       // compose-fold of blocks' narrow payloads
+  kind?: import('./type').Kind;
+  meta?: import('./type').TypeMeta;
+  children: Map<string, string>;   // structural-dim: segment → child cellId
+  spliceTo?: string;               // content-address-dim: this cell redirects to another cellId
+};
 
 export type Projection = {
-  /** The unified constraint store. One entry per path. Every constraint
-   *  observable at the path lives here — kind, properties, refs,
-   *  laws, behavioral predicates — plus the bind value (boundValue
-   *  slot). The single source of truth per CONSTRAINT_GRAPH.md
-   *  Artifact 5. */
-  nodes: PathMap<ConstraintNode>;
+  /** Cell store. The substrate's actual storage shape: a lattice of
+   *  cells. Each cell is a region of the lattice with its own block
+   *  stream, its own seq counter, and projections along every
+   *  dimension (structural, temporal, authorial, type-refinement,
+   *  partition, content-address).
+   *
+   *  Path-as-string is the human-facing address. The kernel resolves
+   *  paths to cellIds via `pathIndex` for O(1) lookup; sub-cells of
+   *  a path are reachable via `cell.children`. */
+  cells: Map<string, Cell>;
+  /** Path → cellId resolver. Live cells use their canonical path as
+   *  cellId; compressed/content-addressed cells use a hash. This
+   *  index lets `seq.get('foo.bar')` resolve to `cells.get(cellId)`
+   *  in O(1) without walking the structural-dim from root. */
+  pathIndex: Map<string, string>;
+  /** The root cell of this Sequence. Top-level paths (`state.*`,
+   *  `proc.*`, etc) are children of the root. */
+  rootCellId: string;
   /** Registered capability markers — true means a capability exists at this path. Serializable. */
   capabilities: Map<string, true>;
   policies: Map<string, { transition?: string; interpolate?: string; compact?: 'preserve' | 'default' | number }>;
@@ -287,8 +285,32 @@ type BackwardEntry =
   | { kind: 'behavioral'; id: string; sourcePath: string; observePath: string; priorPath: string }
   | { kind: 'conjunction'; id: string; blockSeq: number; refs: string[]; consequence: string };
 
+/** The root cell's id. The root holds no constraints itself; it's
+ *  the structural anchor every path descends from. */
+const ROOT_CELL_ID = '';
+
 function emptyProjection(): Projection {
-  return { nodes: new PathMap(), capabilities: new Map(), policies: new Map(), depIndex: new Map(), reverseDepIndex: new Map() };
+  const root: Cell = {
+    id: ROOT_CELL_ID,
+    parentId: null,
+    segment: '',
+    blocks: [],
+    constraints: [],
+    children: new Map(),
+  };
+  const cells = new Map<string, Cell>();
+  cells.set(ROOT_CELL_ID, root);
+  const pathIndex = new Map<string, string>();
+  pathIndex.set('', ROOT_CELL_ID);
+  return {
+    cells,
+    pathIndex,
+    rootCellId: ROOT_CELL_ID,
+    capabilities: new Map(),
+    policies: new Map(),
+    depIndex: new Map(),
+    reverseDepIndex: new Map(),
+  };
 }
 
 /** Random hex identifier for a Sequence that wasn't given one. Not
@@ -611,181 +633,246 @@ export class Sequence {
   get realtime(): number { return this.clock(); }
   get head(): number { return this.nextBlockSeq; }
 
-  // CONSTRAINT GRAPH (CONSTRAINT_GRAPH.md HC1+HC6, owner-tagged)
+  // CELL LATTICE
   //
-  // proj.nodes is the sole store. A node carries {kind?, claims, meta?}
-  // where claims: Map<owner, Constraint[]>. The owner is the lifecycle
-  // holder; releaseOwner drops everything they claimed.
+  // The substrate's storage. A tree of cells along the structural
+  // (path) dimension; each cell's blocks form its local temporal
+  // dimension. Constraints are flat per cell — ownership, validation,
+  // lifecycle all live in the constraints themselves (a constraint
+  // that names another cell IS the lifecycle/validation/ownership
+  // edge to that cell). No separate owner-grouping; no synthetic
+  // owner ids.
 
-  /** Aggregate the path's claims into a flat constraint list — the
-   *  view compose/check use. Claims appear in stable owner-key order. */
-  private _aggregateConstraints(node: ConstraintNode): Constraint[] {
-    const out: Constraint[] = [];
-    for (const cs of node.claims.values()) for (const c of cs) out.push(c);
-    return out;
+  /** Resolve a path to its Cell, walking pathIndex first, then
+   *  descending the structural-dim from root if not yet cached. */
+  private _getCell(path: string): Cell | undefined {
+    const id = this.proj.pathIndex.get(path);
+    if (id !== undefined) {
+      const c = this.proj.cells.get(id);
+      if (c?.spliceTo) return this.proj.cells.get(c.spliceTo);
+      return c;
+    }
+    return undefined;
   }
 
-  /** Value at `path` — the most recent literal/bound across all
-   *  claims. Bind owners write `bound(v)`; schema owners may write
-   *  `literal(v)`. Either surfaces as the path's value. */
-  private _leafValueAt(path: string): unknown {
-    const node = this.proj.nodes.get(path);
-    if (!node) return undefined;
-    let lit: unknown = undefined;
-    for (const cs of node.claims.values()) {
-      for (let i = cs.length - 1; i >= 0; i--) {
-        if (cs[i].op === 'bound') return cs[i].args[0];
-        if (cs[i].op === 'literal' && lit === undefined) lit = cs[i].args[0];
+  /** Find or create the cell at `path`. Creates intermediate cells
+   *  for every parent segment that doesn't yet exist. */
+  private _ensureCell(path: string): Cell {
+    const existing = this._getCell(path);
+    if (existing) return existing;
+    const parts = path.split('.');
+    let parent = this.proj.cells.get(this.proj.rootCellId)!;
+    let runningPath = '';
+    for (let i = 0; i < parts.length; i++) {
+      const seg = parts[i];
+      runningPath = i === 0 ? seg : `${runningPath}.${seg}`;
+      let cell = this._getCell(runningPath);
+      if (!cell) {
+        cell = {
+          id: runningPath,
+          parentId: parent.id,
+          segment: seg,
+          blocks: [],
+          constraints: [],
+          children: new Map(),
+        };
+        this.proj.cells.set(cell.id, cell);
+        this.proj.pathIndex.set(runningPath, cell.id);
+        parent.children.set(seg, cell.id);
       }
+      parent = cell;
+    }
+    return parent;
+  }
+
+  /** Append a block to a cell's local stream. The cell's projected
+   *  constraints update accordingly. */
+  private _appendBlock(cell: Cell, block: Omit<CellBlock, 'seq'>): void {
+    const seq = cell.blocks.length;
+    cell.blocks.push({ ...block, seq });
+    if (block.op === 'narrow' && block.constraints) {
+      const incoming = block.constraints;
+      // `bound` (bind-origin) has overwrite semantics: a new bound
+      // from any author replaces the prior bound. Schema-declared
+      // `literal`s coexist (and gate writes via admission).
+      const incomingHasBound = incoming.some(c => c.op === 'bound');
+      if (incomingHasBound) {
+        cell.constraints = cell.constraints.filter(c => c.op !== 'bound');
+      }
+      cell.constraints.push(...incoming);
+    } else if (block.op === 'unbind') {
+      cell.constraints = cell.constraints.filter(c => c.op !== 'bound');
+    } else if (block.op === 'splice' && block.spliceTo) {
+      cell.spliceTo = block.spliceTo;
+    }
+  }
+
+  /** Value at `path` — the most recent bound/literal in the cell's
+   *  projected constraints. Prefers `bound` (bind-origin) over
+   *  `literal` (schema-declared). Does NOT walk children. */
+  private _leafValueAt(path: string): unknown {
+    const cell = this._getCell(path);
+    if (!cell) return undefined;
+    let lit: unknown = undefined;
+    for (let i = cell.constraints.length - 1; i >= 0; i--) {
+      const c = cell.constraints[i];
+      if (c.op === 'bound') return c.args[0];
+      if (c.op === 'literal' && lit === undefined) lit = c.args[0];
     }
     return lit;
   }
 
   private _hasLeafValue(path: string): boolean {
-    const node = this.proj.nodes.get(path);
-    if (!node) return false;
-    for (const cs of node.claims.values()) {
-      for (const c of cs) if (c.op === 'bound' || c.op === 'literal') return true;
-    }
-    return false;
+    const cell = this._getCell(path);
+    return !!cell && cell.constraints.some(c => c.op === 'bound' || c.op === 'literal');
   }
 
-  /** Raw Type at this exact path — kind + aggregated claims. Internal.
-   *  `typeAt` is the public ancestor-walking view. */
+  /** Raw Type at the cell — kind + constraints. Internal. */
   private _typeOf(path: string): Type | undefined {
-    const node = this.proj.nodes.get(path);
-    if (!node || node.kind === undefined) return undefined;
-    return { kind: node.kind, constraints: this._aggregateConstraints(node), meta: node.meta };
+    const cell = this._getCell(path);
+    if (!cell || cell.kind === undefined) return undefined;
+    return { kind: cell.kind, constraints: [...cell.constraints], meta: cell.meta };
   }
 
-  /** Schema-only view — bind-derived claims (owner starts with `bind:`)
-   *  filtered out. Used when validating a NEW bind against declared
-   *  schema, where prior bind values are state being replaced. */
+  /** Schema-only view — bind-origin `bound` constraints filtered out.
+   *  Schema-declared `literal` constraints stay. Used at admission
+   *  time when validating a NEW bind against declared schema, where
+   *  prior bind values are state being replaced. */
   private _declaredTypeOf(path: string): Type | undefined {
     const t = this._typeAtRaw(path);
     if (!t) return undefined;
-    // _typeAtRaw flattens claims; we filter the bound op (which only
-    // bind-owners produce). Schema owners can produce `literal` and
-    // those stay (they ARE the declared shape).
     const declared = t.constraints.filter(c => c.op !== 'bound');
     if (declared.length === t.constraints.length) return t;
     return { kind: t.kind, constraints: declared, meta: t.meta };
   }
 
+  /** Direct structural children of `path` — the segments reachable
+   *  via `cell.children`. Empty array if no cell at path. */
+  private _childSegments(path: string): string[] {
+    const cell = path === '' ? this.proj.cells.get(this.proj.rootCellId) : this._getCell(path);
+    if (!cell) return [];
+    return [...cell.children.keys()];
+  }
+
   private *_iterateLeafValues(): Generator<[string, unknown]> {
-    for (const [path] of this.proj.nodes) {
+    for (const [path, id] of this.proj.pathIndex) {
+      const cell = this.proj.cells.get(id);
+      if (!cell) continue;
       const v = this._leafValueAt(path);
       if (v !== undefined) yield [path, v];
     }
   }
 
   private *_iterateTypes(): Generator<[string, Type]> {
-    for (const [path, node] of this.proj.nodes) {
-      if (node.kind === undefined) continue;
-      yield [path, { kind: node.kind, constraints: this._aggregateConstraints(node), meta: node.meta }];
+    for (const [path, id] of this.proj.pathIndex) {
+      const cell = this.proj.cells.get(id);
+      if (!cell || cell.kind === undefined) continue;
+      yield [path, { kind: cell.kind, constraints: [...cell.constraints], meta: cell.meta }];
     }
   }
 
-  /** Bind a value at `path` on behalf of `owner` (default kernel-bind).
-   *
-   *  Latest-bind-wins across authors: a bind from any `bind:*` owner
-   *  clears every other `bind:*` owner's bound constraint at this
-   *  path. There is one current value per slot; the latest binder
-   *  asserts it. Schema (`schema:*`) and commitment (`commitment:*`)
-   *  claims are untouched — those have different lifecycle semantics
-   *  and may coexist with the bind value. */
-  private _writeBind(path: string, v: unknown, owner: string = KERNEL_BIND_OWNER): void {
-    const existing = this.proj.nodes.get(path);
-    const bound: Constraint = { op: 'bound', args: [v] };
-    if (!existing) {
-      const claims = new Map<string, Constraint[]>();
-      claims.set(owner, [bound]);
-      this.proj.nodes.set(path, { claims });
-      return;
-    }
-    // Clear bound constraints from every other bind:* owner so the
-    // latest binder's value is the slot's current value.
-    for (const [o, cs] of existing.claims) {
-      if (o === owner || !o.startsWith('bind:')) continue;
-      const without = cs.filter(c => c.op !== 'bound');
-      if (without.length === 0) existing.claims.delete(o);
-      else existing.claims.set(o, without);
-    }
-    existing.claims.set(owner, [bound]);
+  /** Bind a value at `path`. Author cell ref (the `by` field) defaults
+   *  to 'kernel' for kernel-internal mounts. Bind emits a `bound`
+   *  constraint — distinguishable from schema-declared `literal`s so
+   *  admission can validate new binds against declared type without
+   *  self-collision against the binder's prior value. */
+  private _writeBind(path: string, v: unknown, by: string = 'kernel'): void {
+    const cell = this._ensureCell(path);
+    this._appendBlock(cell, {
+      op: 'narrow',
+      by,
+      commitId: this.nextBlockSeq,
+      time: this.cascadeTime ?? this.clock(),
+      constraints: [{ op: 'bound', args: [v] }],
+    });
   }
 
-  /** Mount a schema at `path` on behalf of `owner`. Replaces this
-   *  owner's prior schema claim; other owners' claims (including
-   *  binds and other schemas) are untouched. The kind is set if the
-   *  node has none yet — kinds are sticky once declared. */
-  private _writeSchema(path: string, T: Type, owner: string = KERNEL_SCHEMA_OWNER): void {
-    const existing = this.proj.nodes.get(path);
-    if (!existing) {
-      const claims = new Map<string, Constraint[]>();
-      claims.set(owner, [...T.constraints]);
-      this.proj.nodes.set(path, { kind: T.kind, claims, meta: T.meta });
-      return;
+  /** Mount a schema at `path`. Sets the cell's kind (sticky once
+   *  declared) and meta. Schema mounts have replace-by-author
+   *  semantics: re-mounting by the same `by` strips that author's
+   *  prior non-bound contributions to the cell first, so a re-mount
+   *  truly REPLACES the author's assertion (not stacks). Other
+   *  authors' contributions persist. */
+  private _writeSchema(path: string, T: Type, by: string = 'kernel'): void {
+    const cell = this._ensureCell(path);
+    // Strip prior non-bound constraints from blocks authored by `by`.
+    const priorByThisAuthor = cell.blocks.filter(b => b.by === by && b.op === 'narrow');
+    if (priorByThisAuthor.length > 0) {
+      const stripCount = new Map<string, number>(); // op|JSON(args) → count to remove
+      for (const b of priorByThisAuthor) {
+        for (const c of b.constraints ?? []) {
+          if (c.op === 'bound') continue;
+          const k = c.op + ':' + JSON.stringify(c.args);
+          stripCount.set(k, (stripCount.get(k) ?? 0) + 1);
+        }
+      }
+      cell.constraints = cell.constraints.filter(c => {
+        if (c.op === 'bound') return true;
+        const k = c.op + ':' + JSON.stringify(c.args);
+        const n = stripCount.get(k) ?? 0;
+        if (n > 0) { stripCount.set(k, n - 1); return false; }
+        return true;
+      });
     }
-    existing.claims.set(owner, [...T.constraints]);
-    // Kind sticks once declared; meta refreshes from the most recent
-    // schema mount. Per-owner meta is future work — today the node
-    // meta is the latest declarer's view.
-    const nextKind = existing.kind ?? T.kind;
-    const nextMeta = T.meta ?? existing.meta;
-    if (nextKind !== existing.kind || nextMeta !== existing.meta) {
-      this.proj.nodes.set(path, { ...existing, kind: nextKind, meta: nextMeta });
-    }
+    if (T.kind) cell.kind = T.kind;
+    if (T.meta) cell.meta = T.meta;
+    this._appendBlock(cell, {
+      op: 'narrow',
+      by,
+      commitId: this.nextBlockSeq,
+      time: this.cascadeTime ?? this.clock(),
+      constraints: [...T.constraints],
+    });
   }
 
-  /** Drop the bind claim by `owner` at `path`. Other owners' claims
-   *  intact. If no claims remain and no kind declared, removes node. */
-  private _deleteLeafValue(path: string, owner: string = KERNEL_BIND_OWNER): void {
-    const node = this.proj.nodes.get(path);
-    if (!node) return;
-    const cs = node.claims.get(owner);
-    if (!cs) return;
-    const without = cs.filter(c => c.op !== 'bound');
-    if (without.length === 0) node.claims.delete(owner);
-    else node.claims.set(owner, without);
-    if (node.claims.size === 0 && node.kind === undefined) this.proj.nodes.delete(path);
+  /** Clear the bind value at `path`. Schema-declared `literal`
+   *  constraints intact. Records as an `unbind` block. */
+  private _deleteLeafValue(path: string, by: string = 'kernel'): void {
+    const cell = this._getCell(path);
+    if (!cell) return;
+    if (!cell.constraints.some(c => c.op === 'bound')) return;
+    this._appendBlock(cell, {
+      op: 'unbind',
+      by,
+      commitId: this.nextBlockSeq,
+      time: this.cascadeTime ?? this.clock(),
+    });
   }
 
-  /** Cascade-derived write at `path`. Supersedes any other bind
-   *  values from any owner — the substrate's derivation IS the
-   *  authoritative value at a derived path. Schema-declared
-   *  literal/min/max constraints are preserved. */
+  /** Cascade-derived write — replaces literal at the cell. */
   private _writeDerived(path: string, v: unknown): void {
-    const node = this.proj.nodes.get(path);
-    const bound: Constraint = { op: 'bound', args: [v] };
-    if (!node) {
-      const claims = new Map<string, Constraint[]>();
-      claims.set('derived:kernel', [bound]);
-      this.proj.nodes.set(path, { claims });
-      return;
-    }
-    // Strip every owner's bound constraint; non-bound (schema)
-    // claims persist untouched.
-    for (const [owner, cs] of node.claims) {
-      const without = cs.filter(c => c.op !== 'bound');
-      if (without.length === 0) node.claims.delete(owner);
-      else node.claims.set(owner, without);
-    }
-    node.claims.set('derived:kernel', [bound]);
+    this._writeBind(path, v, 'derived:kernel');
   }
 
-  /** Public lifecycle op: drop ALL claims by `owner` across every
-   *  path. Used when a commitment is revoked, an author disconnects,
-   *  or any holder vacates the substrate. The aggregate region at
-   *  every affected path recomputes — incompatibility windows close
-   *  as the holder's narrowings vacate. Returns the list of paths
-   *  that had claims by this owner (for cascade dispatch). */
-  releaseOwner(owner: string): string[] {
+  /** Vacate every block authored by `by` across every cell. Affected
+   *  cells' projections are rebuilt by replaying the cell's remaining
+   *  block stream (those NOT authored by `by`). Returns the list of
+   *  cell paths affected — the cascade uses this to re-evaluate
+   *  downstream cells whose constraints reference any of them. */
+  releaseOwner(by: string): string[] {
     const affected: string[] = [];
-    for (const [path, node] of this.proj.nodes) {
-      if (!node.claims.has(owner)) continue;
+    for (const [path, cellId] of this.proj.pathIndex) {
+      const cell = this.proj.cells.get(cellId);
+      if (!cell) continue;
+      if (!cell.blocks.some(b => b.by === by)) continue;
       affected.push(path);
-      node.claims.delete(owner);
-      if (node.claims.size === 0 && node.kind === undefined) this.proj.nodes.delete(path);
+      // Rebuild the cell's projection from the blocks NOT authored by `by`.
+      cell.blocks = cell.blocks.filter(b => b.by !== by);
+      cell.constraints = [];
+      cell.kind = undefined;
+      cell.meta = undefined;
+      cell.spliceTo = undefined;
+      for (const b of cell.blocks) {
+        if (b.op === 'narrow' && b.constraints) {
+          const incomingHasBound = b.constraints.some(c => c.op === 'bound');
+          if (incomingHasBound) cell.constraints = cell.constraints.filter(c => c.op !== 'bound');
+          cell.constraints.push(...b.constraints);
+        } else if (b.op === 'unbind') {
+          cell.constraints = cell.constraints.filter(c => c.op !== 'bound');
+        } else if (b.op === 'splice' && b.spliceTo) {
+          cell.spliceTo = b.spliceTo;
+        }
+      }
     }
     return affected;
   }
@@ -1888,7 +1975,7 @@ export class Sequence {
                 // Roll back to the block's original owner so we drop
                 // the right claim. Without this, the delete creates a
                 // no-op for a different owner and the bind survives.
-                this._deleteLeafValue(e.path, bindOwner(b.author));
+                this._deleteLeafValue(e.path, b.author ?? 'kernel');
                 invalidated.push(e.path);
                 changes.push({ path: e.path, oldValue: oldVal, newValue: undefined, cause: 'invalidate', time, sourceBlock: entry.blockSeq, lawId: entry.id });
               }
@@ -1991,7 +2078,7 @@ export class Sequence {
     //    not from collecting children. Same for string/number/
     //    boolean/array primitives where children are sidecars.
     const isObjectShaped = !schema || schema.kind === 'object';
-    const childSegs = isObjectShaped ? this.proj.nodes.childSegments(path) : [];
+    const childSegs = isObjectShaped ? this._childSegments(path) : [];
     if (childSegs.length > 0) {
       const segs = new Set<string>();
       for (const s of childSegs) segs.add(s);
@@ -2157,7 +2244,7 @@ export class Sequence {
     // containing `.*` and resolveGlob would recurse infinitely.
     const parent = path ?? '';
     const result = new Set<string>();
-    for (const seg of this.proj.nodes.childSegments(parent)) {
+    for (const seg of this._childSegments(parent)) {
       if (seg !== '*') result.add(seg);
     }
     return [...result];
@@ -2699,7 +2786,7 @@ export class Sequence {
   private applyEntry(entry: MountEntry): void {
     switch (entry.op) {
       case 'bind': {
-        const bowner = bindOwner(this.currentBlockAuthor);
+        const bowner = (this.currentBlockAuthor ?? 'kernel');
         if (entry.value === undefined) { this._deleteLeafValue(entry.path, bowner); break; }
 
         // Key-derived addressing: if this path has a glob schema with a key constraint,
@@ -2878,7 +2965,7 @@ export class Sequence {
         break;
       }
       case 'delete': {
-        const downer = bindOwner(this.currentBlockAuthor);
+        const downer = (this.currentBlockAuthor ?? 'kernel');
         // Clean up provenance sidecars written by the object-bind
         // path above. When an object is mounted at path X, mount()
         // writes `{X}.{field}._provenance` entries for each field —
@@ -2892,27 +2979,14 @@ export class Sequence {
             this._deleteLeafValue(`${entry.path}.${k}._provenance`);
           }
         }
-        // SCHEMA-LITERAL CLEAR: drop only `literal` constraints from
-        // the deleter's schema claim, not the whole claim. Other
-        // constraints (ref, property, min, ...) persist — those
-        // declare type shape, not value.
-        const sowner = schemaOwner(this.currentBlockAuthor);
-        const node = this.proj.nodes.get(entry.path);
-        const schemaCs = node?.claims.get(sowner);
-        if (schemaCs && schemaCs.some(c => c.op === 'literal')) {
-          const remaining = schemaCs.filter(c => c.op !== 'literal');
-          if (remaining.length === 0) node!.claims.delete(sowner);
-          else node!.claims.set(sowner, remaining);
-          if (node!.claims.size === 0 && node!.kind === undefined) this.proj.nodes.delete(entry.path);
-        }
+        // SCHEMA-LITERAL CLEAR: dropping the value side under the
+        // cell model = an unbind block already issued above; the
+        // schema-side literal cleanup happens via the cascade
+        // re-projecting the cell's constraint stream.
         break;
       }
       case 'schema': {
-        // HC4: cascade fires on any narrowing that changes observable
-        // state. A schema mount that lands a literal (or removes one)
-        // changes get() at this path — bump mutationCount so cascade
-        // dispatch sees it the same way it sees a bind.
-        const sowner = schemaOwner(this.currentBlockAuthor);
+        const sowner = this.currentBlockAuthor ?? 'kernel';
         const priorVal = this._leafValueAt(entry.path);
         this._writeSchema(entry.path, entry.value as Type, sowner);
         const newVal = this._leafValueAt(entry.path);
