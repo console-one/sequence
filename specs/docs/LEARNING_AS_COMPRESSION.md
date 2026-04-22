@@ -399,11 +399,15 @@ at each step.
 2. **ARCHITECTURE.md** — how the pieces fit.
 3. **COMMITMENTS.md** — what the substrate is doing, write-side.
 4. **This document** — what the substrate is doing, learning-side.
-5. **KERNEL_REQUIREMENTS.md** — the contract the kernel implements.
-6. **DSL_REQUIREMENTS.md** — how it surfaces in ft text.
+5. **CAPABILITY_INSTALLATION.md** — what the substrate is doing,
+   install-side.
+6. **KERNEL_REQUIREMENTS.md** — the contract the kernel implements.
+7. **DSL_REQUIREMENTS.md** — how it surfaces in ft text.
 
-COMMITMENTS.md and this document together describe one cascade in
-its two terminal projections: election of new write-leases, and
-compression of the observations that fulfilled the old ones.
-Write and read, forward and backward, state and model — one
-substrate, one log, one loop.
+COMMITMENTS.md (write-side), this document (learning-side), and
+CAPABILITY_INSTALLATION.md (install-side) together describe one
+cascade in three terminal projections: election of new write-
+leases, compression of the observations that fulfilled the old
+ones, and acquisition of the capabilities that produce both.
+One substrate, one log, one loop — three entry points into the
+same machine.

@@ -308,7 +308,9 @@ at each step.
 
 The narrowing-toward-concreteness view (read-side) is documented
 across the other specs; the observational / learning-side dual is
-LEARNING_AS_COMPRESSION.md. Together with this document they
-describe one cascade in two complementary terminal projections:
-election of new write-leases, and compression of the observations
-that fulfilled the old ones.
+LEARNING_AS_COMPRESSION.md, and the install-side dual is
+CAPABILITY_INSTALLATION.md. Together the three describe one
+cascade in three complementary terminal projections: election of
+new write-leases (this document), compression of the observations
+that fulfilled old ones (learning-side), and acquisition of the
+capabilities that produce both (install-side).
