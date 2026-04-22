@@ -35,7 +35,8 @@ describe('cascade on narrowing — Artifact 6 R-A6.6', () => {
     expect(seq.get('gated')).toBe('pending');
   });
 
-  // Note: re-mount schema literal vs prior bind precedence is an
-  // unsettled HC1 question — left for the spec's open-questions
-  // discussion rather than encoded as a test.
+  // Schema-literal vs prior-bind precedence is settled by slot
+  // coherence (slot-coherence.test.ts): contradictory narrowings
+  // are rejected. The author must remove the conflicting prior
+  // state explicitly — neither op silently overrides the other.
 });

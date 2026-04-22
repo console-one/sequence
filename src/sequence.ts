@@ -560,8 +560,15 @@ export class Sequence {
 
   private _leafValueAt(path: string): unknown {
     const cs = this.proj.nodes.get(path)?.constraints;
-    if (!cs) return undefined;
-    for (let i = cs.length - 1; i >= 0; i--) if (cs[i].op === 'bound') return cs[i].args[0];
+    if (!cs || cs.length === 0) return undefined;
+    // _writeBind / _writeSchema maintain the invariant that any
+    // `bound` constraint is always the last element. Check it
+    // directly — O(1) for the common post-bind case.
+    const last = cs[cs.length - 1];
+    if (last.op === 'bound') return last.args[0];
+    // No bound — scan for a schema-declared literal. Constraint counts
+    // per path are bounded by what the schema declarer wrote
+    // (typically 0–5), so this is effectively constant.
     for (let i = cs.length - 1; i >= 0; i--) if (cs[i].op === 'literal') return cs[i].args[0];
     return undefined;
   }
@@ -869,10 +876,13 @@ export class Sequence {
       if (entry.op === 'bind') {
         const { value: withDefaults, defaultedKeys } = this.applyDefaults(entry.path, entry.value);
         const val = this.applyTransition(entry.path, withDefaults);
-        // Validate the NEW value against the type DECLARED for the
-        // path — not the merged view that includes the prior bind's
-        // literal. The prior literal is the state being replaced;
-        // checking against it would reject every state transition.
+        // Substrate coherence: the bind narrows the path to a single-
+        // inhabitant region (the literal {val}). Meet against the
+        // DECLARED constraint set — the prior bound is the value
+        // being replaced and is excluded from the meet (otherwise
+        // every state transition would self-collide). If the meet
+        // is `never`, the new value violates the declared type and
+        // the bind is rejected.
         const declared = this._declaredTypeOf(entry.path);
         if (declared) {
           const result = check(declared, val, entry.path);
@@ -894,20 +904,44 @@ export class Sequence {
           }
         }
       } else if (entry.op === 'schema' && this.instantiatingIndex !== true) {
-        // A schema mount that lands a `literal` constraint surfaces
-        // that literal as a value via the Session A read-side
-        // unification — the same observable effect a bind would have.
-        // When the path's existing schema declares `producedBy`, that
-        // value-establishing schema mount must satisfy provenance the
-        // same way a bind would. (Schemas that only DECLARE policy —
-        // adding producedBy itself, or constraining without binding a
-        // value — are exempt; they don't write anything observable.)
         const incoming = entry.value as Type | undefined;
-        const incomingHasLiteral = incoming?.constraints.some(c => c.op === 'literal');
-        if (incomingHasLiteral) {
-          const existing = this.typeAt(entry.path);
-          if (existing && constraintsOf(existing, 'producedBy').length > 0) {
-            const provReject = checkProvenance(entry.path, existing);
+        if (incoming) {
+          // Substrate coherence: every narrowing meets against the
+          // existing constraint set. If the meet is `never`, the
+          // narrowing inhabits an empty region of value-space and
+          // must be rejected — two writes can't both occupy the
+          // same slot with contradictory values.
+          //
+          // Concrete cases this catches:
+          //   - schema literal vs prior bind value (different values)
+          //   - schema literal vs prior schema literal (different values)
+          //   - any future range/regex/distribution narrowings whose
+          //     intersection is empty
+          //
+          // This is the kernel-level coherence guarantee. Today's
+          // representation is a flat constraint list; a richer
+          // segment/interval representation would compute the same
+          // meet directly on the value-space region.
+          const existingType = this.typeAt(entry.path);
+          if (existingType) {
+            const meet = compose(existingType, incoming);
+            if (isNever(meet)) {
+              return {
+                ok: false, blockSeq, nextWake: this.nextWake(),
+                gaps: [{
+                  path: entry.path,
+                  reason: `schema mount narrows to never — incompatible with existing constraints at ${entry.path}`,
+                  constraint: { op: 'never', args: [] } as Constraint,
+                }],
+              };
+            }
+          }
+          // Provenance: a value-establishing schema mount (one that
+          // lands a literal) on a path declaring producedBy must
+          // satisfy provenance just as a bind would.
+          const incomingHasLiteral = incoming.constraints.some(c => c.op === 'literal');
+          if (incomingHasLiteral && existingType && constraintsOf(existingType, 'producedBy').length > 0) {
+            const provReject = checkProvenance(entry.path, existingType);
             if (provReject) return provReject;
           }
         }
