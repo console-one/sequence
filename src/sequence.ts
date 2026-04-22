@@ -114,22 +114,56 @@ export class PathMap<V> extends Map<string, V> {
 }
 
 /**
- * The unified constraint store's per-path record.
+ * Per-path record in the unified constraint store.
  *
- * Under CONSTRAINT_GRAPH.md, every path has ONE constraint set. The
- * record carries the kind (string/number/object/...) when one was
- * declared, the constraint list, and any meta. A bind alone has no
- * declared kind; a schema mount sets it; subsequent mounts compose.
+ * Claims are grouped by OWNER — the lifecycle holder of the
+ * narrowing. An owner is a synthetic id that names who can later
+ * replace or release the claim:
  *
- * This shape preserves the existing `Type` semantics so compose / covers
- * / typeAt continue to work without churn — `ConstraintNode` IS a Type
- * with optional kind.
+ *   `bind:${author}`        — author's overwriteable bind value
+ *   `schema:${author}`      — author's schema declaration
+ *   `commitment:${id}`      — held by an active commitment
+ *   `kernel`                — kernel-internal mounts (_rt, _exec, ...)
+ *
+ * The slot's effective region is the meet (intersection) of every
+ * owner's claims. The kernel rejects writes whose meet would be
+ * `never`. When an owner releases (e.g. a commitment is revoked),
+ * `releaseOwner` drops their claims and the aggregate recomputes —
+ * other owners' claims persist.
+ *
+ * Segments aren't pre-decided per kind; they're declared by claim
+ * mounts and grow via projection conjunctions promoted by the
+ * cascade (LEARNING_AS_COMPRESSION.md).
  */
 export type ConstraintNode = {
   kind?: import('./type').Kind;
-  constraints: Constraint[];
+  claims: Map<string, Constraint[]>;
   meta?: import('./type').TypeMeta;
 };
+
+/** Build a synthetic owner id for a bind by `author`. Two writes
+ *  from the same author via different ops (bind vs schema) own
+ *  separate slots and don't collide. */
+export function bindOwner(author: string | undefined): string {
+  return `bind:${author ?? 'anon'}`;
+}
+
+/** Build a synthetic owner id for a schema mount by `author`. */
+export function schemaOwner(author: string | undefined): string {
+  return `schema:${author ?? 'anon'}`;
+}
+
+/** Build a synthetic owner id for a commitment-held claim. */
+export function commitmentOwner(commitmentId: string): string {
+  return `commitment:${commitmentId}`;
+}
+
+/** Default owner for kernel-internal bind writes (sidecar paths
+ *  like _rt, _exec, _blocks that aren't author-owned). */
+const KERNEL_BIND_OWNER = 'bind:kernel';
+
+/** Default owner for kernel-internal schema writes. */
+const KERNEL_SCHEMA_OWNER = 'schema:kernel';
 
 export type Projection = {
   /** The unified constraint store. One entry per path. Every constraint
@@ -515,6 +549,10 @@ export class Sequence {
    * itself — no shadow snapshots required.
    */
   private currentBlockEntries: MountEntry[] | null = null;
+  /** The block author for the mount currently being applied. Used by
+   *  applyEntry's bind/schema/delete handlers to assign the correct
+   *  owner to each claim. Reset to undefined between outer mounts. */
+  private currentBlockAuthor: string | undefined = undefined;
   /**
    * Runtime-only capability implementations. NOT part of the serializable projection.
    * When a Function is passed to mount('cap'), it goes here. The projection only gets
@@ -551,46 +589,62 @@ export class Sequence {
   get realtime(): number { return this.clock(); }
   get head(): number { return this.nextBlockSeq; }
 
-  // CONSTRAINT GRAPH (CONSTRAINT_GRAPH.md, HC1+HC6)
+  // CONSTRAINT GRAPH (CONSTRAINT_GRAPH.md HC1+HC6, owner-tagged)
   //
-  // proj.nodes is the sole store. A node is {kind?, constraints[], meta?}.
-  // Bind values appear as `bound` ops; schema-declared literals as `literal`.
-  // Both surface as the path's value; the op distinguishes who can replace
-  // them (bind: replaces own `bound`; schema: replaces all `literal`s).
+  // proj.nodes is the sole store. A node carries {kind?, claims, meta?}
+  // where claims: Map<owner, Constraint[]>. The owner is the lifecycle
+  // holder; releaseOwner drops everything they claimed.
 
+  /** Aggregate the path's claims into a flat constraint list — the
+   *  view compose/check use. Claims appear in stable owner-key order. */
+  private _aggregateConstraints(node: ConstraintNode): Constraint[] {
+    const out: Constraint[] = [];
+    for (const cs of node.claims.values()) for (const c of cs) out.push(c);
+    return out;
+  }
+
+  /** Value at `path` — the most recent literal/bound across all
+   *  claims. Bind owners write `bound(v)`; schema owners may write
+   *  `literal(v)`. Either surfaces as the path's value. */
   private _leafValueAt(path: string): unknown {
-    const cs = this.proj.nodes.get(path)?.constraints;
-    if (!cs || cs.length === 0) return undefined;
-    // _writeBind / _writeSchema maintain the invariant that any
-    // `bound` constraint is always the last element. Check it
-    // directly — O(1) for the common post-bind case.
-    const last = cs[cs.length - 1];
-    if (last.op === 'bound') return last.args[0];
-    // No bound — scan for a schema-declared literal. Constraint counts
-    // per path are bounded by what the schema declarer wrote
-    // (typically 0–5), so this is effectively constant.
-    for (let i = cs.length - 1; i >= 0; i--) if (cs[i].op === 'literal') return cs[i].args[0];
-    return undefined;
+    const node = this.proj.nodes.get(path);
+    if (!node) return undefined;
+    let lit: unknown = undefined;
+    for (const cs of node.claims.values()) {
+      for (let i = cs.length - 1; i >= 0; i--) {
+        if (cs[i].op === 'bound') return cs[i].args[0];
+        if (cs[i].op === 'literal' && lit === undefined) lit = cs[i].args[0];
+      }
+    }
+    return lit;
   }
 
   private _hasLeafValue(path: string): boolean {
-    const cs = this.proj.nodes.get(path)?.constraints;
-    return !!cs && cs.some(c => c.op === 'bound' || c.op === 'literal');
+    const node = this.proj.nodes.get(path);
+    if (!node) return false;
+    for (const cs of node.claims.values()) {
+      for (const c of cs) if (c.op === 'bound' || c.op === 'literal') return true;
+    }
+    return false;
   }
 
-  /** Raw constraints at this exact path. Internal — `typeAt` is the
-   *  public ancestor-walking HC1 view that maps `bound→literal`. */
+  /** Raw Type at this exact path — kind + aggregated claims. Internal.
+   *  `typeAt` is the public ancestor-walking view. */
   private _typeOf(path: string): Type | undefined {
     const node = this.proj.nodes.get(path);
     if (!node || node.kind === undefined) return undefined;
-    return { kind: node.kind, constraints: node.constraints, meta: node.meta };
+    return { kind: node.kind, constraints: this._aggregateConstraints(node), meta: node.meta };
   }
 
-  /** Schema-declared Type — `bound` constraints filtered out. Walks
-   *  ancestors. Used to validate a NEW bind against the declared type. */
+  /** Schema-only view — bind-derived claims (owner starts with `bind:`)
+   *  filtered out. Used when validating a NEW bind against declared
+   *  schema, where prior bind values are state being replaced. */
   private _declaredTypeOf(path: string): Type | undefined {
     const t = this._typeAtRaw(path);
     if (!t) return undefined;
+    // _typeAtRaw flattens claims; we filter the bound op (which only
+    // bind-owners produce). Schema owners can produce `literal` and
+    // those stay (they ARE the declared shape).
     const declared = t.constraints.filter(c => c.op !== 'bound');
     if (declared.length === t.constraints.length) return t;
     return { kind: t.kind, constraints: declared, meta: t.meta };
@@ -606,42 +660,112 @@ export class Sequence {
   private *_iterateTypes(): Generator<[string, Type]> {
     for (const [path, node] of this.proj.nodes) {
       if (node.kind === undefined) continue;
-      yield [path, { kind: node.kind, constraints: node.constraints, meta: node.meta }];
+      yield [path, { kind: node.kind, constraints: this._aggregateConstraints(node), meta: node.meta }];
     }
   }
 
-  private _writeBind(path: string, v: unknown): void {
+  /** Bind a value at `path` on behalf of `owner` (default kernel-bind).
+   *
+   *  Latest-bind-wins across authors: a bind from any `bind:*` owner
+   *  clears every other `bind:*` owner's bound constraint at this
+   *  path. There is one current value per slot; the latest binder
+   *  asserts it. Schema (`schema:*`) and commitment (`commitment:*`)
+   *  claims are untouched — those have different lifecycle semantics
+   *  and may coexist with the bind value. */
+  private _writeBind(path: string, v: unknown, owner: string = KERNEL_BIND_OWNER): void {
     const existing = this.proj.nodes.get(path);
     const bound: Constraint = { op: 'bound', args: [v] };
-    if (!existing) { this.proj.nodes.set(path, { constraints: [bound] }); return; }
-    const without = existing.constraints.filter(c => c.op !== 'bound');
-    this.proj.nodes.set(path, { ...existing, constraints: [...without, bound] });
+    if (!existing) {
+      const claims = new Map<string, Constraint[]>();
+      claims.set(owner, [bound]);
+      this.proj.nodes.set(path, { claims });
+      return;
+    }
+    // Clear bound constraints from every other bind:* owner so the
+    // latest binder's value is the slot's current value.
+    for (const [o, cs] of existing.claims) {
+      if (o === owner || !o.startsWith('bind:')) continue;
+      const without = cs.filter(c => c.op !== 'bound');
+      if (without.length === 0) existing.claims.delete(o);
+      else existing.claims.set(o, without);
+    }
+    existing.claims.set(owner, [bound]);
   }
 
-  private _writeSchema(path: string, T: Type): void {
+  /** Mount a schema at `path` on behalf of `owner`. Replaces this
+   *  owner's prior schema claim; other owners' claims (including
+   *  binds and other schemas) are untouched. The kind is set if the
+   *  node has none yet — kinds are sticky once declared. */
+  private _writeSchema(path: string, T: Type, owner: string = KERNEL_SCHEMA_OWNER): void {
     const existing = this.proj.nodes.get(path);
-    const priorBound = existing?.constraints.find(c => c.op === 'bound');
-    this.proj.nodes.set(path, {
-      kind: T.kind,
-      constraints: priorBound ? [...T.constraints, priorBound] : [...T.constraints],
-      meta: T.meta,
-    });
+    if (!existing) {
+      const claims = new Map<string, Constraint[]>();
+      claims.set(owner, [...T.constraints]);
+      this.proj.nodes.set(path, { kind: T.kind, claims, meta: T.meta });
+      return;
+    }
+    existing.claims.set(owner, [...T.constraints]);
+    // Kind sticks once declared; meta refreshes from the most recent
+    // schema mount. Per-owner meta is future work — today the node
+    // meta is the latest declarer's view.
+    const nextKind = existing.kind ?? T.kind;
+    const nextMeta = T.meta ?? existing.meta;
+    if (nextKind !== existing.kind || nextMeta !== existing.meta) {
+      this.proj.nodes.set(path, { ...existing, kind: nextKind, meta: nextMeta });
+    }
   }
 
-  private _deleteLeafValue(path: string): void {
+  /** Drop the bind claim by `owner` at `path`. Other owners' claims
+   *  intact. If no claims remain and no kind declared, removes node. */
+  private _deleteLeafValue(path: string, owner: string = KERNEL_BIND_OWNER): void {
     const node = this.proj.nodes.get(path);
     if (!node) return;
-    const without = node.constraints.filter(c => c.op !== 'bound');
-    if (without.length === 0 && node.kind === undefined) this.proj.nodes.delete(path);
-    else this.proj.nodes.set(path, { ...node, constraints: without });
+    const cs = node.claims.get(owner);
+    if (!cs) return;
+    const without = cs.filter(c => c.op !== 'bound');
+    if (without.length === 0) node.claims.delete(owner);
+    else node.claims.set(owner, without);
+    if (node.claims.size === 0 && node.kind === undefined) this.proj.nodes.delete(path);
   }
 
-  private _deleteSchemaOnly(path: string): void {
+  /** Cascade-derived write at `path`. Supersedes any other bind
+   *  values from any owner — the substrate's derivation IS the
+   *  authoritative value at a derived path. Schema-declared
+   *  literal/min/max constraints are preserved. */
+  private _writeDerived(path: string, v: unknown): void {
     const node = this.proj.nodes.get(path);
-    if (!node) return;
-    const bound = node.constraints.find(c => c.op === 'bound');
-    if (!bound) this.proj.nodes.delete(path);
-    else this.proj.nodes.set(path, { constraints: [bound] });
+    const bound: Constraint = { op: 'bound', args: [v] };
+    if (!node) {
+      const claims = new Map<string, Constraint[]>();
+      claims.set('derived:kernel', [bound]);
+      this.proj.nodes.set(path, { claims });
+      return;
+    }
+    // Strip every owner's bound constraint; non-bound (schema)
+    // claims persist untouched.
+    for (const [owner, cs] of node.claims) {
+      const without = cs.filter(c => c.op !== 'bound');
+      if (without.length === 0) node.claims.delete(owner);
+      else node.claims.set(owner, without);
+    }
+    node.claims.set('derived:kernel', [bound]);
+  }
+
+  /** Public lifecycle op: drop ALL claims by `owner` across every
+   *  path. Used when a commitment is revoked, an author disconnects,
+   *  or any holder vacates the substrate. The aggregate region at
+   *  every affected path recomputes — incompatibility windows close
+   *  as the holder's narrowings vacate. Returns the list of paths
+   *  that had claims by this owner (for cascade dispatch). */
+  releaseOwner(owner: string): string[] {
+    const affected: string[] = [];
+    for (const [path, node] of this.proj.nodes) {
+      if (!node.claims.has(owner)) continue;
+      affected.push(path);
+      node.claims.delete(owner);
+      if (node.claims.size === 0 && node.kind === undefined) this.proj.nodes.delete(path);
+    }
+    return affected;
   }
 
   /** Total number of value-changing bind operations recorded across
@@ -1038,7 +1162,9 @@ export class Sequence {
     const changedPaths: string[] = ['_rt']; // _rt always changes — triggers temporal invariants
     const changes: PathChange[] = [];
     const priorEntriesRef = this.currentBlockEntries;
+    const priorAuthorRef = this.currentBlockAuthor;
     this.currentBlockEntries = blockEntries;
+    this.currentBlockAuthor = blockOpts?.author;
     try {
       for (const entry of entries) {
         if (entry.op === 'bind') {
@@ -1052,6 +1178,7 @@ export class Sequence {
       }
     } finally {
       this.currentBlockEntries = priorEntriesRef;
+      this.currentBlockAuthor = priorAuthorRef;
     }
     // While constraints are indexed by indexBlock (called above via this.blocks.push + indexBlock pattern)
     // Re-index the applied block for invariant entries if it has while constraints
@@ -1527,7 +1654,7 @@ export class Sequence {
             const cascadeBlock: Block = { seq: this.nextBlockSeq++, time, entries: [{ op: 'bind', path: dp, value: next }], status: 'applied' };
             this.blocks.push(cascadeBlock);
             this.blockBySeq.set(cascadeBlock.seq, cascadeBlock);
-            this._writeBind(dp, next);
+            this._writeDerived(dp, next);
             cascaded.push(dp);
             changes.push({ path: dp, oldValue: oldVal, newValue: next, cause: 'cascade', time, sourceBlock: cascadeBlock.seq, lawId: 'segmented_string' });
             queue.push(dp);
@@ -1588,7 +1715,7 @@ export class Sequence {
         const cascadeBlock: Block = { seq: this.nextBlockSeq++, time, entries: [{ op: 'bind', path: dp, value: r }], status: 'applied' };
         this.blocks.push(cascadeBlock);
         this.blockBySeq.set(cascadeBlock.seq, cascadeBlock);
-        this._writeBind(dp, r);
+        this._writeDerived(dp, r);
         cascaded.push(dp);
         changes.push({ path: dp, oldValue: oldVal, newValue: r, cause: 'cascade', time, sourceBlock: cascadeBlock.seq, lawId: `derived:${fnId}` });
         queue.push(dp);
@@ -1691,7 +1818,10 @@ export class Sequence {
             for (const e of b.entries) {
               if (e.op === 'bind') {
                 const oldVal = this._leafValueAt(e.path);
-                this._deleteLeafValue(e.path);
+                // Roll back to the block's original owner so we drop
+                // the right claim. Without this, the delete creates a
+                // no-op for a different owner and the bind survives.
+                this._deleteLeafValue(e.path, bindOwner(b.author));
                 invalidated.push(e.path);
                 changes.push({ path: e.path, oldValue: oldVal, newValue: undefined, cause: 'invalidate', time, sourceBlock: entry.blockSeq, lawId: entry.id });
               }
@@ -2502,7 +2632,8 @@ export class Sequence {
   private applyEntry(entry: MountEntry): void {
     switch (entry.op) {
       case 'bind': {
-        if (entry.value === undefined) { this._deleteLeafValue(entry.path); break; }
+        const bowner = bindOwner(this.currentBlockAuthor);
+        if (entry.value === undefined) { this._deleteLeafValue(entry.path, bowner); break; }
 
         // Key-derived addressing: if this path has a glob schema with a key constraint,
         // and the value is an object, derive the actual path from the key fields.
@@ -2542,7 +2673,7 @@ export class Sequence {
               this.applyEntry({ op: 'bind', path: f.ref, value: f.value });
             }
             // Apply the full value locally too (the source of truth for this path)
-            this._writeBind(entry.path, entry.value);
+            this._writeBind(entry.path, entry.value, bowner);
             break;
           }
         }
@@ -2676,39 +2807,36 @@ export class Sequence {
         // every body mount was a no-op and there is no more work.
         const priorValue = this._leafValueAt(entry.path);
         if (!Object.is(priorValue, entry.value)) this.mutationCount++;
-        this._writeBind(entry.path, entry.value);
+        this._writeBind(entry.path, entry.value, bowner);
         break;
       }
       case 'delete': {
+        const downer = bindOwner(this.currentBlockAuthor);
         // Clean up provenance sidecars written by the object-bind
         // path above. When an object is mounted at path X, mount()
         // writes `{X}.{field}._provenance` entries for each field —
         // delete without cleanup leaves those dangling, which makes
         // keys(X) still report X as a child even though X itself
-        // has no value. Walk the former value's fields (if it was
-        // an object) and delete the matching sidecars.
+        // has no value.
         const former = this._leafValueAt(entry.path);
-        this._deleteLeafValue(entry.path);
+        this._deleteLeafValue(entry.path, downer);
         if (former !== null && typeof former === 'object' && !Array.isArray(former)) {
           for (const k of Object.keys(former as Record<string, unknown>)) {
             this._deleteLeafValue(`${entry.path}.${k}._provenance`);
           }
         }
-        // SCHEMA-LITERAL CLEAR: under the unified read model, a
-        // value can come from `proj.values` OR from a `literal()`
-        // constraint in the schema (the walker's "schema-as-value"
-        // step). Delete must clear both representations or the
-        // value re-emerges via the schema literal. Strip literal
-        // constraints from the schema; if the schema becomes empty
-        // (was JUST the literal), drop it entirely.
-        const sch = this._typeOf(entry.path);
-        if (sch && sch.constraints.some(c => c.op === 'literal')) {
-          const remaining = sch.constraints.filter(c => c.op !== 'literal');
-          if (remaining.length === 0) {
-            this._deleteSchemaOnly(entry.path);
-          } else {
-            this._writeSchema(entry.path, { ...sch, constraints: remaining });
-          }
+        // SCHEMA-LITERAL CLEAR: drop only `literal` constraints from
+        // the deleter's schema claim, not the whole claim. Other
+        // constraints (ref, property, min, ...) persist — those
+        // declare type shape, not value.
+        const sowner = schemaOwner(this.currentBlockAuthor);
+        const node = this.proj.nodes.get(entry.path);
+        const schemaCs = node?.claims.get(sowner);
+        if (schemaCs && schemaCs.some(c => c.op === 'literal')) {
+          const remaining = schemaCs.filter(c => c.op !== 'literal');
+          if (remaining.length === 0) node!.claims.delete(sowner);
+          else node!.claims.set(sowner, remaining);
+          if (node!.claims.size === 0 && node!.kind === undefined) this.proj.nodes.delete(entry.path);
         }
         break;
       }
@@ -2717,8 +2845,9 @@ export class Sequence {
         // state. A schema mount that lands a literal (or removes one)
         // changes get() at this path — bump mutationCount so cascade
         // dispatch sees it the same way it sees a bind.
+        const sowner = schemaOwner(this.currentBlockAuthor);
         const priorVal = this._leafValueAt(entry.path);
-        this._writeSchema(entry.path, entry.value as Type);
+        this._writeSchema(entry.path, entry.value as Type, sowner);
         const newVal = this._leafValueAt(entry.path);
         if (!Object.is(priorVal, newVal)) this.mutationCount++;
         if (entry.value) {
