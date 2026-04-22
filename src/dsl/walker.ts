@@ -270,15 +270,22 @@ export function walk(
         // If the value is concrete (literal/object with all literals), mount as bind.
         // If it's a type (schema), mount as schema.
         if (isConcrete(stmt.value)) {
-          // Schema mount carries the kind only — strip the literal so a
-          // gated `=` (e.g. `x = "ready" when auth EXISTS`) doesn't land
-          // the value through the unconditional schema. The bind below
-          // carries the value and is gated by `opts.where`. (Surfaced by
-          // Session A's read-side unification: schema-with-literal is
-          // observable as a value via get(), so a double-emit lets the
-          // value escape the where clause. R-A6.7.1.)
-          const schemaOnly: Type = { ...type, constraints: type.constraints.filter(c => c.op !== 'literal') };
-          mounts.push(seq.mount('schema', stmt.path, schemaOnly));
+          // Skip the kind-declaring schema mount when an ancestor (a
+          // glob like `tasks.*`) already declares the path's kind.
+          // Re-declaring with a different kind would be incoherent
+          // and the substrate's coherence check would reject it; the
+          // bind alone validates the value against the inherited
+          // type. (Bind-without-prior-schema still gets the schema
+          // mount to declare the kind for downstream readers.)
+          const inherited = seq.typeAt(stmt.path);
+          if (!inherited) {
+            // Schema mount carries the kind only — strip the literal
+            // so a gated `=` doesn't land the value through the
+            // unconditional schema. The bind carries the value gated
+            // by `opts.where`. R-A6.7.1.
+            const schemaOnly: Type = { ...type, constraints: type.constraints.filter(c => c.op !== 'literal') };
+            mounts.push(seq.mount('schema', stmt.path, schemaOnly));
+          }
           mounts.push(seq.mount('bind', stmt.path, toValue(stmt.value, seq), opts));
         } else {
           mounts.push(seq.mount('schema', stmt.path, type, opts));
