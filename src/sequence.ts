@@ -27,7 +27,7 @@
 import { type MountEntry, type Block, type BlockOpts } from './statement';
 import { type Type, type Constraint, constraintOf, constraintsOf, isAny, isNever, properties } from './type';
 import { check, type Gap, compose, covers, backwardInfer, typeSpecificity, evaluateExpr, cdf, survival, posteriorPredictive, conjugateUpdate, type DistParams } from './compose';
-import { runAdmissionLaws } from './laws';
+import { runAdmissionLaws, runReadLaws } from './laws';
 
 // ═══════════════════════════════════════════════════════════════════════
 // TYPES
@@ -2033,15 +2033,51 @@ export class Sequence {
 
   // ═══ READS ════════════════════════════════════════════════════════
 
-  get(path: string, visited?: Set<string>): unknown {
+  get(path: string, optsOrVisited?: { under?: string; visited?: Set<string> } | Set<string>): unknown {
+    // Dual call shape:
+    //   Kernel-internal:        get(path)                    — no commitment, bypasses read laws
+    //   Kernel-internal recurse: get(path, visitedSet)       — recursion cycle guard
+    //   Commitment-scoped:      get(path, {under})           — external read under a commitment
+    //   Commitment recurse:     get(path, {under, visited})  — recursion under the same commitment
+    //
+    // When `under` is defined, read-triggered laws fire BEFORE core
+    // resolution and at EVERY recursive descent (structural leaf
+    // collection, ref-walk, ancestor-ref walk). A law failure masks
+    // the return to undefined — indistinguishable from non-existent,
+    // matching hoist visibility semantics. The commitment path binds
+    // as $commitment in the law's check; field access via
+    // $commitment.author etc. resolves against the commitment's
+    // substrate-stored subtree. Internal kernel reads without {under}
+    // bypass laws — matching admission's systemInternal discipline.
+    let visited: Set<string> | undefined;
+    let under: string | undefined;
+    if (optsOrVisited instanceof Set) {
+      visited = optsOrVisited;
+    } else if (optsOrVisited && typeof optsOrVisited === 'object') {
+      under = optsOrVisited.under;
+      visited = optsOrVisited.visited;
+    }
+    if (under !== undefined) {
+      // Commitment-scoped read. Fire read-triggered laws at this path.
+      // Recursive descent below propagates the commitment via {under,
+      // visited} so nested reads (children, refs) fire their own laws
+      // under the same commitment.
+      const readResult = runReadLaws(this, path, under, this.clock());
+      if (!readResult.ok) return undefined;
+    }
     visited ??= new Set();
     if (visited.has(path)) return undefined;
     visited.add(path);
+    // Recursive descent helper: propagate commitment context if present.
+    const descend = (p: string): unknown =>
+      under !== undefined
+        ? this.get(p, { under, visited })
+        : this.get(p, visited);
     // 1. Exact-path schema with a ref → follow it. This is the
     //    classic "this path IS a pointer" case; the pointer
     //    dereferences to its target unconditionally.
     const schema = this._typeOf(path);
-    if (schema) { const rc = constraintOf(schema, 'ref'); if (rc) return this.get(rc.args[0] as string, visited); }
+    if (schema) { const rc = constraintOf(schema, 'ref'); if (rc) return descend(rc.args[0] as string); }
     // 2. Direct value at this path → return it. Per-install
     //    overrides live here: a sub-path under an install prefix
     //    with a direct bind short-circuits the ancestor-ref walk
@@ -2088,7 +2124,7 @@ export class Sequence {
         if (seg === '*') continue;       // glob slot — never a real child
         if (seg.startsWith('_')) continue; // kernel-internal sidecars (_provenance etc.)
         const childPath = path ? `${path}.${seg}` : seg;
-        const childVal = this.get(childPath, visited);
+        const childVal = descend(childPath);
         if (childVal !== undefined) {
           obj[seg] = childVal;
           any = true;
@@ -2113,7 +2149,7 @@ export class Sequence {
       if (!rc) continue;
       const target = rc.args[0] as string;
       const suffix = parts.slice(i).join('.');
-      return this.get(`${target}.${suffix}`, visited);
+      return descend(`${target}.${suffix}`);
     }
     return undefined;
   }
