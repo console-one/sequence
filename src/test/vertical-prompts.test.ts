@@ -39,16 +39,13 @@ function createPromptTemplate(segments: { name: string; value?: string; type?: T
 /** Fork a prompt: read projection → create new Sequence → mount state. */
 function forkPrompt(source: Sequence): Sequence {
   const fork = new Sequence();
-  // Copy schemas
-  for (const [path, schema] of source.projection.schemas) {
+  for (const [path, schema] of source.iterateTypes()) {
     fork.mount('schema', path, schema);
   }
-  // Copy values
-  for (const [path, value] of source.projection.values) {
+  for (const [path, value] of source.iterateValues()) {
     if (path.startsWith('_')) continue; // skip internal paths
     fork.mount('bind', path, value);
   }
-  // Copy policies
   for (const [path, policy] of source.projection.policies) {
     fork.mount('policy', path, policy);
   }
@@ -64,7 +61,7 @@ function promptGaps(seq: Sequence): { path: string; type: Type }[] {
 function promptConcreteness(seq: Sequence): number {
   // Count all prompt.* schemas (each is a segment)
   const segmentPaths: string[] = [];
-  for (const [path] of seq.projection.schemas) {
+  for (const [path] of seq.iterateTypes()) {
     if (path.startsWith('prompt.') && !path.includes('.', 7)) segmentPaths.push(path); // top-level prompt children only
   }
   if (segmentPaths.length === 0) return 1;
@@ -90,9 +87,9 @@ describe('Prompt composition via Sequence operations', () => {
     ]);
 
     // Each segment is an independent path with its own schema
-    expect(seq.projection.schemas.has('prompt.prefix')).toBe(true);
-    expect(seq.projection.schemas.has('prompt.input')).toBe(true);
-    expect(seq.projection.schemas.has('prompt.suffix')).toBe(true);
+    expect(seq.typeAt('prompt.prefix')).toBeDefined();
+    expect(seq.typeAt('prompt.input')).toBeDefined();
+    expect(seq.typeAt('prompt.suffix')).toBeDefined();
 
     // Concrete segments have values
     expect(seq.get('prompt.prefix')).toBe('This is a story lens system prompt.\n\nThe users request is: ');

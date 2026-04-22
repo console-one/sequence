@@ -114,10 +114,10 @@ function computeClusters(seq: Sequence): Cluster[] {
   const allPaths = new Set<string>();
 
   // Collect all non-internal paths
-  for (const [path] of proj.values) {
+  for (const [path] of seq.iterateValues()) {
     if (!path.startsWith('_')) allPaths.add(path.split('.')[0]);
   }
-  for (const [path] of proj.schemas) {
+  for (const [path] of seq.iterateTypes()) {
     if (!path.startsWith('_')) allPaths.add(path.split('.')[0]);
   }
 

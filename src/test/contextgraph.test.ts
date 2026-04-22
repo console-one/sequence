@@ -409,7 +409,7 @@ describe('provisional sharding', () => {
     // "Shard" = copy sub-range data to a scoped prefix
     const subRange = 'tasks.team2';
     const shardData: Record<string, unknown> = {};
-    for (const [path, value] of seq.projection.values) {
+    for (const [path, value] of seq.iterateValues()) {
       if (path.startsWith(subRange)) shardData[path] = value;
     }
     expect(Object.keys(shardData).length).toBeGreaterThan(0);
@@ -445,7 +445,7 @@ describe('provisional sharding', () => {
     seq.mount('bind', '_shards.s1.data.tasks.team2.result', { done: true });
     // Merge: copy shard data back to parent paths
     const dataPrefix = '_shards.s1.data.';
-    for (const [path, value] of seq.projection.values) {
+    for (const [path, value] of seq.iterateValues()) {
       if (path.startsWith(dataPrefix)) {
         seq.mount('bind', path.slice(dataPrefix.length), value);
       }

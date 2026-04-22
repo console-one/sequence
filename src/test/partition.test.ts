@@ -438,8 +438,7 @@ describe('type-declared partition', () => {
   test('mount lookup: after a schema with partition(id) lands, partitionOf at that path reports id', () => {
     const seq = new Sequence();
     seq.mount('schema', 'keys.openai', createType('object', [partition('id')]));
-    // Use the projection's schemas map the way sequence.ts does internally.
-    const stored = seq.projection.schemas.get('keys.openai');
+    const stored = seq.typeAt('keys.openai');
     expect(partitionOf('keys.openai', stored)).toBe('id');
   });
 

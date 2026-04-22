@@ -53,7 +53,7 @@ function resolveInstancePath(schemaPath: string, targetPath: string): string | n
 
 export function collectAdmissionLaws(seq: Sequence, targetPath: string): AdmissionHit[] {
   const hits: AdmissionHit[] = [];
-  for (const [schemaPath, schema] of seq.projection.schemas) {
+  for (const [schemaPath, schema] of seq.iterateTypes()) {
     const laws = constraintsOf(schema, 'law');
     if (laws.length === 0) continue;
     const instancePath = resolveInstancePath(schemaPath, targetPath);

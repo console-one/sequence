@@ -113,16 +113,47 @@ export class PathMap<V> extends Map<string, V> {
   }
 }
 
+/**
+ * The unified constraint store's per-path record.
+ *
+ * Under CONSTRAINT_GRAPH.md, every path has ONE constraint set. The
+ * record carries the kind (string/number/object/...) when one was
+ * declared, the constraint list, and any meta. A bind alone has no
+ * declared kind; a schema mount sets it; subsequent mounts compose.
+ *
+ * This shape preserves the existing `Type` semantics so compose / covers
+ * / typeAt continue to work without churn — `ConstraintNode` IS a Type
+ * with optional kind.
+ */
+export type ConstraintNode = {
+  kind?: import('./type').Kind;
+  /** Schema-declared constraints. Literal constraints in this array
+   *  came from `mount('schema', ..., createType(kind, [literal(v)]))`
+   *  — they are part of the declared type, not bind values. */
+  constraints: Constraint[];
+  meta?: import('./type').TypeMeta;
+  /** Bind-side value slot. Set by `_writeBind`; not exposed as part
+   *  of the Type returned by `_typeOf`. Distinguishes a bound value
+   *  from a literal-constrained schema during the Artifact 5
+   *  transition. Artifact 6 collapses the two into one constraint
+   *  set; until then, this slot keeps the dual semantics one-store. */
+  boundValue?: { v: unknown };
+};
+
 export type Projection = {
-  values: PathMap<unknown>;
-  schemas: PathMap<Type>;
+  /** The unified constraint store. One entry per path. Every constraint
+   *  observable at the path lives here — kind, properties, refs,
+   *  laws, behavioral predicates — plus the bind value (boundValue
+   *  slot). The single source of truth per CONSTRAINT_GRAPH.md
+   *  Artifact 5. */
+  nodes: PathMap<ConstraintNode>;
   /** Registered capability markers — true means a capability exists at this path. Serializable. */
   capabilities: Map<string, true>;
   policies: Map<string, { transition?: string; interpolate?: string; compact?: 'preserve' | 'default' | number }>;
   /**
    * Forward dependency cache: source path → set of dependent paths.
-   * This is a COMPILED FAST PATH over the canonical data in values at _deps.{source}.
-   * fireLaws reads from here for O(1). The values are the source of truth.
+   * This is a COMPILED FAST PATH over the canonical data in `nodes`
+   * at `_deps.{source}`. fireLaws reads from here for O(1).
    */
   depIndex: Map<string, Set<string>>;
   /** Reverse dependency cache: dependent path → set of source paths. Fast path over _rdeps.{dep}. */
@@ -232,7 +263,7 @@ type BackwardEntry =
   | { kind: 'conjunction'; id: string; blockSeq: number; refs: string[]; consequence: string };
 
 function emptyProjection(): Projection {
-  return { values: new PathMap(), schemas: new PathMap(), capabilities: new Map(), policies: new Map(), depIndex: new Map(), reverseDepIndex: new Map() };
+  return { nodes: new PathMap(), capabilities: new Map(), policies: new Map(), depIndex: new Map(), reverseDepIndex: new Map() };
 }
 
 /** Random hex identifier for a Sequence that wasn't given one. Not
@@ -518,9 +549,9 @@ export class Sequence {
     // Bootstrap partition rules as readable values — the Sequence
     // describes its own partition semantics as type state.
     for (const p of ['state', 'proc', 'id', 'req', 'chan', 'proj'] as Partition[]) {
-      this.proj.values.set(`_partitions.${p}.persistence`, PARTITION_PERSISTENCE[p]);
-      this.proj.values.set(`_partitions.${p}.authoritative`, PARTITION_AUTHORITY[p]);
-      this.proj.values.set(`_partitions.${p}.allowedRefs`, [...ALLOWED_REFS[p]]);
+      this._writeBind(`_partitions.${p}.persistence`, PARTITION_PERSISTENCE[p]);
+      this._writeBind(`_partitions.${p}.authoritative`, PARTITION_AUTHORITY[p]);
+      this._writeBind(`_partitions.${p}.allowedRefs`, [...ALLOWED_REFS[p]]);
     }
     if (initial) this.mount(initial);
   }
@@ -528,6 +559,115 @@ export class Sequence {
   get lockRemaining(): number { return Math.max(0, this.lockExpiry - this.clock()); }
   get realtime(): number { return this.clock(); }
   get head(): number { return this.nextBlockSeq; }
+
+  // ═══ UNIFIED CONSTRAINT STORE (CONSTRAINT_GRAPH.md Artifact 5) ═══════
+  //
+  // These helpers are the single read/write surface over the unified
+  // `proj.nodes` store. During the Artifact 5 transition the legacy
+  // dual stores `proj.values` and `proj.schemas` continue to receive
+  // mirrored writes; once all internal call sites route through these
+  // helpers the duals are deleted.
+  //
+  // Naming convention: helpers are kernel-private (underscore prefix);
+  // external API (`get`, `typeAt`, `mount`) sits on top.
+
+  /** Return the bound value at `path`, or undefined if no bind
+   *  occurred. The unified-store equivalent of the legacy
+   *  `proj.values.get(path)`. Does NOT walk children — for structural
+   *  collection use `Sequence.get(path)`. */
+  private _leafValueAt(path: string): unknown {
+    return this.proj.nodes.get(path)?.boundValue?.v;
+  }
+
+  /** True iff a bind has occurred at `path`. The unified-store
+   *  equivalent of the legacy `proj.values.has(path)`. */
+  private _hasLeafValue(path: string): boolean {
+    return !!this.proj.nodes.get(path)?.boundValue;
+  }
+
+  /** Reconstruct a Type from the node at `path`. Returns undefined if
+   *  no schema was ever declared there (only binds happened, with no
+   *  preceding kind declaration). The unified-store equivalent of the
+   *  legacy `proj.schemas.get(path)`.
+   *
+   *  The bind value (boundValue slot) is NOT included in the returned
+   *  Type — only the schema-declared constraints. Artifact 6 collapses
+   *  bind and schema into a single `narrow` op; until then this
+   *  preserves the existing typeAt semantics. */
+  private _typeOf(path: string): Type | undefined {
+    const node = this.proj.nodes.get(path);
+    if (!node) return undefined;
+    if (node.kind === undefined) return undefined;
+    return { kind: node.kind, constraints: node.constraints, meta: node.meta };
+  }
+
+  /** Iterate every (path, value) pair where the path has a bind value. */
+  private *_iterateLeafValues(): Generator<[string, unknown]> {
+    for (const [path, node] of this.proj.nodes) {
+      if (node.boundValue) yield [path, node.boundValue.v];
+    }
+  }
+
+  /** Iterate every (path, type) pair where the path has a declared schema. */
+  private *_iterateTypes(): Generator<[string, Type]> {
+    for (const [path, node] of this.proj.nodes) {
+      if (node.kind === undefined) continue;
+      yield [path, { kind: node.kind, constraints: node.constraints, meta: node.meta }];
+    }
+  }
+
+  /** Bind a value at `path`. Sets the node's boundValue slot;
+   *  schema-side constraints (kind, properties, refs, behavioral
+   *  predicates) are untouched. Object/array decomposition is handled
+   *  by the bind op handler in applyEntry, which calls this per leaf. */
+  private _writeBind(path: string, v: unknown): void {
+    const existing = this.proj.nodes.get(path);
+    const next: ConstraintNode = existing
+      ? { ...existing, boundValue: { v } }
+      : { constraints: [], boundValue: { v } };
+    this.proj.nodes.set(path, next);
+  }
+
+  /** Replace the schema declaration at `path` with `T`. Sets
+   *  kind/constraints/meta from T; leaves the bind value (boundValue
+   *  slot) intact. */
+  private _writeSchema(path: string, T: Type): void {
+    const existing = this.proj.nodes.get(path);
+    const next: ConstraintNode = {
+      kind: T.kind,
+      constraints: [...T.constraints],
+      meta: T.meta,
+      boundValue: existing?.boundValue,
+    };
+    this.proj.nodes.set(path, next);
+  }
+
+  /** Clear the bind value at `path`. Leaves any schema-declared
+   *  constraints intact. If the node becomes empty, removes it. */
+  private _deleteLeafValue(path: string): void {
+    const node = this.proj.nodes.get(path);
+    if (!node) return;
+    if (node.constraints.length === 0 && node.kind === undefined) {
+      this.proj.nodes.delete(path);
+    } else {
+      const { boundValue: _bv, ...rest } = node;
+      this.proj.nodes.set(path, rest);
+    }
+  }
+
+  /** Remove the schema declaration at `path` — kind, meta, and all
+   *  declared constraints. Leaves the bind value (boundValue slot)
+   *  untouched. */
+  private _deleteSchemaOnly(path: string): void {
+    const node = this.proj.nodes.get(path);
+    if (!node) return;
+    if (!node.boundValue) {
+      this.proj.nodes.delete(path);
+    } else {
+      this.proj.nodes.set(path, { constraints: [], boundValue: node.boundValue });
+    }
+  }
+
   /** Total number of value-changing bind operations recorded across
    *  this Sequence's lifetime. Unlike `head`, this excludes no-op
    *  re-mounts (same path + same value). Consumers use this as a
@@ -556,6 +696,15 @@ export class Sequence {
   }
   get length(): number { return this.blocks.length; }
   get projection(): Readonly<Projection> { return this.proj; }
+
+  /** Public iterator over (path, Type) pairs for every path with a
+   *  declared schema. Replaces direct `proj.schemas` iteration for
+   *  downstream consumers (admission law collection, render). */
+  iterateTypes(): Iterable<[string, Type]> { return this._iterateTypes(); }
+
+  /** Public iterator over (path, value) pairs for every path with a
+   *  bind value. Replaces direct `proj.values` iteration. */
+  iterateValues(): Iterable<[string, unknown]> { return this._iterateLeafValues(); }
 
   // ═══ MOUNT — the single operation ═════════════════════════════════
 
@@ -587,8 +736,8 @@ export class Sequence {
     const time = this.cascadeTime ?? this.clock();
     if (wasOutermost) this.cascadeTime = time;
     try {
-    this.proj.values.set('_rt', time);
-    this.proj.values.set('_lockExpiry', this.lockExpiry);
+    this._writeBind('_rt', time);
+    this._writeBind('_lockExpiry', this.lockExpiry);
 
     // ─── Partition reference validation ───────────────────────────
     // For each entry, check that any paths it depends on (via schema
@@ -601,7 +750,7 @@ export class Sequence {
     // already has a schema mounted, its declared partition takes
     // precedence over its path prefix.
     const partitionErrors: string[] = [];
-    const schemaFor = (path: string): Type | undefined => this.proj.schemas.get(path);
+    const schemaFor = (path: string): Type | undefined => this._typeOf(path);
     const partitionAt = (path: string, explicitType?: Type): Partition =>
       partitionOf(path, explicitType ?? schemaFor(path));
     for (const entry of entries) {
@@ -668,17 +817,17 @@ export class Sequence {
         // Mount lifecycle fact: this block is pending, visible to other agents.
         // _rt is the only monotonic measure of state evolution.
         const blockPath = `_blocks.${this.identity}.${blockSeq}`;
-        this.proj.values.set(`${blockPath}.status`, 'suspended');
-        this.proj.values.set(`${blockPath}.suspendedAt`, time);
-        this.proj.values.set(`${blockPath}.target`, entries[0]?.path ?? '');
-        if (blockOpts.author) this.proj.values.set(`${blockPath}.author`, blockOpts.author);
-        if (blockOpts.label) this.proj.values.set(`${blockPath}.label`, blockOpts.label);
+        this._writeBind(`${blockPath}.status`, 'suspended');
+        this._writeBind(`${blockPath}.suspendedAt`, time);
+        this._writeBind(`${blockPath}.target`, entries[0]?.path ?? '');
+        if (blockOpts.author) this._writeBind(`${blockPath}.author`, blockOpts.author);
+        if (blockOpts.label) this._writeBind(`${blockPath}.label`, blockOpts.label);
         // Mount unmet conditions as schemas — these ARE the gaps that
         // backward inference walks. When a capability fills them, the
         // backward index triggers resume.
         for (let i = 0; i < failed.length; i++) {
           const c = failed[i];
-          this.proj.values.set(`${blockPath}.pending.${i}`, `${c.op}(${c.args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(', ')})`);
+          this._writeBind(`${blockPath}.pending.${i}`, `${c.op}(${c.args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(', ')})`);
         }
 
         const gaps = failed.map(c => ({
@@ -692,7 +841,7 @@ export class Sequence {
     // derive the actual path from the value's key fields before type-checking.
     entries = entries.map(entry => {
       if (entry.op !== 'bind' || typeof entry.value !== 'object' || entry.value === null || Array.isArray(entry.value)) return entry;
-      const globSchema = this.proj.schemas.get(entry.path + '.*');
+      const globSchema = this._typeOf(entry.path + '.*');
       if (!globSchema) return entry;
       const keyConstraint = globSchema.constraints.find(c => c.op === 'key');
       if (!keyConstraint) return entry;
@@ -727,15 +876,15 @@ export class Sequence {
             const authorMatch = author === requiredProducer;
             // Check 2: there exists an exec record where this value was produced by the required capability
             let execMatch = false;
-            for (const [p, v] of this.proj.values) {
+            for (const [p, v] of this._iterateLeafValues()) {
               if (!p.startsWith('_exec.') || !p.endsWith('.invoked')) continue;
               if (v !== requiredProducer) continue;
               const execSeqStr = p.split('.')[1];
-              const produced = this.proj.values.get(`_exec.${execSeqStr}.produced`) as string[] | undefined;
+              const produced = this._leafValueAt(`_exec.${execSeqStr}.produced`) as string[] | undefined;
               if (produced?.includes(entry.path)) {
                 // Check maxAge if specified
                 if (maxAge !== undefined) {
-                  const execTime = this.proj.values.get(`_exec.${execSeqStr}.time`) as number | undefined;
+                  const execTime = this._leafValueAt(`_exec.${execSeqStr}.time`) as number | undefined;
                   if (execTime !== undefined && (time - execTime) > maxAge) continue; // expired
                 }
                 execMatch = true;
@@ -762,7 +911,7 @@ export class Sequence {
         if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
           const defaultSet = new Set(defaultedKeys);
           for (const key of Object.keys(val as Record<string, unknown>)) {
-            this.proj.values.set(`${entry.path}.${key}._provenance`, defaultSet.has(key) ? 'default' : 'user');
+            this._writeBind(`${entry.path}.${key}._provenance`, defaultSet.has(key) ? 'default' : 'user');
           }
         }
       } else {
@@ -842,18 +991,18 @@ export class Sequence {
     // comment block above the PathMap class for the amplification
     // this would cause without that index.
     const blockRoot = `_blocks.${this.identity}.${blockSeq}`;
-    this.proj.values.set(`${blockRoot}.time`, time);
-    this.proj.values.set(`${blockRoot}.status`, 'applied');
+    this._writeBind(`${blockRoot}.time`, time);
+    this._writeBind(`${blockRoot}.status`, 'applied');
     if (blockOpts?.author) {
-      this.proj.values.set(`${blockRoot}.author`, blockOpts.author);
+      this._writeBind(`${blockRoot}.author`, blockOpts.author);
     }
     if (blockOpts?.label) {
-      this.proj.values.set(`${blockRoot}.label`, blockOpts.label);
+      this._writeBind(`${blockRoot}.label`, blockOpts.label);
     }
     const blockPaths = blockEntries
       .map(e => e.path)
       .filter((p, i, a) => a.indexOf(p) === i);
-    this.proj.values.set(`${blockRoot}.paths`, blockPaths);
+    this._writeBind(`${blockRoot}.paths`, blockPaths);
     const changedPaths: string[] = ['_rt']; // _rt always changes — triggers temporal invariants
     const changes: PathChange[] = [];
     const priorEntriesRef = this.currentBlockEntries;
@@ -861,7 +1010,7 @@ export class Sequence {
     try {
       for (const entry of entries) {
         if (entry.op === 'bind') {
-          const oldValue = this.proj.values.get(entry.path);
+          const oldValue = this._leafValueAt(entry.path);
           this.applyEntry(entry);
           changes.push({ path: entry.path, oldValue, newValue: entry.value, cause: 'direct', time, sourceBlock: blockSeq });
         } else {
@@ -908,38 +1057,38 @@ export class Sequence {
     // Schema/cap/policy mounts are structural setup, not knowledge graph edges.
     if (entries.some(e => e.op === 'bind')) {
       const execPath = `_exec.${blockSeq}`;
-      this.proj.values.set(`${execPath}.time`, time);
-      if (blockOpts?.author) this.proj.values.set(`${execPath}.runBy`, blockOpts.author);
+      this._writeBind(`${execPath}.time`, time);
+      if (blockOpts?.author) this._writeBind(`${execPath}.runBy`, blockOpts.author);
       const produced: string[] = [];
       const used: string[] = [];
       for (const c of changes) {
         produced.push(c.path);
         if (c.oldValue !== undefined) used.push(c.path);
       }
-      if (produced.length > 0) this.proj.values.set(`${execPath}.produced`, produced);
-      if (used.length > 0) this.proj.values.set(`${execPath}.used`, used);
+      if (produced.length > 0) this._writeBind(`${execPath}.produced`, produced);
+      if (used.length > 0) this._writeBind(`${execPath}.used`, used);
       const primaryPath = entries[0]?.path;
       if (primaryPath) {
         // Type-aware partition tag: if the primary path has a schema
         // already mounted (which it typically does by the time exec
         // records its trace), its declared partition wins over the
         // lexical prefix. Unschematised paths fall back to prefix.
-        this.proj.values.set(
+        this._writeBind(
           `${execPath}.partition`,
-          partitionOf(primaryPath, this.proj.schemas.get(primaryPath)),
+          partitionOf(primaryPath, this._typeOf(primaryPath)),
         );
         const targetSchema = this.typeAt(primaryPath);
         if (targetSchema?.kind === 'fn') {
-          this.proj.values.set(`${execPath}.invoked`, primaryPath);
+          this._writeBind(`${execPath}.invoked`, primaryPath);
           // No per-call IO snapshot needed: the fn invocation path
           // in applyEntry pushes `.input` and `.result` sub-binds
           // into the block's entries array, so history queries can
           // read them via getAt(path, blockSeq) from the log.
         }
-        if (targetSchema) this.proj.values.set(`${execPath}.objectType`, targetSchema.kind);
+        if (targetSchema) this._writeBind(`${execPath}.objectType`, targetSchema.kind);
       }
       if (fx.resumed.length > 0) {
-        this.proj.values.set(`${execPath}.satisfied`, fx.resumed.map(s => `_blocks.${this.identity}.${s}`));
+        this._writeBind(`${execPath}.satisfied`, fx.resumed.map(s => `_blocks.${this.identity}.${s}`));
       }
     }
 
@@ -1150,7 +1299,7 @@ export class Sequence {
    * Enforce a behavioral predicate when its observed path changes.
    */
   private enforceBehavioral(entry: BackwardEntry & { kind: 'behavioral' }): void {
-    const sourceSchema = this.proj.schemas.get(entry.sourcePath);
+    const sourceSchema = this._typeOf(entry.sourcePath);
     if (!sourceSchema) return;
 
     const identityC = constraintsOf(sourceSchema, 'identity');
@@ -1165,7 +1314,7 @@ export class Sequence {
       const holds = Object.is(outVal, inVal);
       const currentPrior = this.get(entry.priorPath) as Record<string, number> | undefined;
       const prior = currentPrior ?? { alpha: 1, beta: 1 };
-      this.proj.values.set(entry.priorPath, conjugateUpdate('beta', prior, holds ? 'success' : 'failure'));
+      this._writeBind(entry.priorPath, conjugateUpdate('beta', prior, holds ? 'success' : 'failure'));
     }
 
     for (const ec of equationC) {
@@ -1181,7 +1330,7 @@ export class Sequence {
       const holds = Object.is(lhsVal, rhsVal);
       const currentPrior = this.get(entry.priorPath) as Record<string, number> | undefined;
       const prior = currentPrior ?? { alpha: 1, beta: 1 };
-      this.proj.values.set(entry.priorPath, conjugateUpdate('beta', prior, holds ? 'success' : 'failure'));
+      this._writeBind(entry.priorPath, conjugateUpdate('beta', prior, holds ? 'success' : 'failure'));
     }
   }
 
@@ -1194,7 +1343,7 @@ export class Sequence {
    * not a side channel. Readers cascade from it.
    */
   private rescoreWorkingSet(_time: number): { evicted: string[]; promoted: string[] } {
-    const budget = this.proj.values.get('_reader.maxItems') as number | undefined;
+    const budget = this._leafValueAt('_reader.maxItems') as number | undefined;
     if (!budget || budget <= 0) return { evicted: [], promoted: [] };
 
     // Try mounted eviction policy capability first
@@ -1244,7 +1393,7 @@ export class Sequence {
       : now + 60_000;
 
     const scored: { path: string; score: number; reason: string }[] = [];
-    for (const [path] of this.proj.values) {
+    for (const [path] of this._iterateLeafValues()) {
       if (path.startsWith('_')) continue;
       const onGapPath = neededPaths.has(path);
       const c = this.concretenessDistribution(path).cdf(lookaheadT);
@@ -1255,8 +1404,8 @@ export class Sequence {
       const reason = onGapPath ? 'on gap resolution path' : `cdf(t+${lookaheadT - now}ms)=${c.toFixed(2)} betweenness=${betweenness}`;
       scored.push({ path, score, reason });
     }
-    for (const [path] of this.proj.schemas) {
-      if (path.startsWith('_') || this.proj.values.has(path)) continue;
+    for (const [path] of this._iterateTypes()) {
+      if (path.startsWith('_') || this._hasLeafValue(path)) continue;
       const onGapPath = neededPaths.has(path);
       const deps = this.proj.depIndex.get(path)?.size ?? 0;
       const revDeps = this.proj.reverseDepIndex.get(path)?.size ?? 0;
@@ -1290,10 +1439,10 @@ export class Sequence {
     promoted: { path: string; score?: number; reason?: string }[],
     nextLikelyNeeded: { path: string; probability: number }[],
   ): void {
-    this.proj.values.set('_process.workingSet.kept', kept.slice(0, 20)); // top 20 for observability
-    this.proj.values.set('_process.workingSet.evicted', evicted.slice(0, 20));
-    this.proj.values.set('_process.workingSet.promoted', promoted);
-    this.proj.values.set('_process.workingSet.nextLikelyNeeded', nextLikelyNeeded);
+    this._writeBind('_process.workingSet.kept', kept.slice(0, 20)); // top 20 for observability
+    this._writeBind('_process.workingSet.evicted', evicted.slice(0, 20));
+    this._writeBind('_process.workingSet.promoted', promoted);
+    this._writeBind('_process.workingSet.nextLikelyNeeded', nextLikelyNeeded);
   }
 
   private fireLaws(initialPaths: string[], time: number) {
@@ -1332,21 +1481,21 @@ export class Sequence {
       // triggering change path + value as the head args, followed by any
       // exact-arg values).
       const fireDerived = (dp: string, triggerPath: string | null) => {
-        const s = this.proj.schemas.get(dp);
+        const s = this._typeOf(dp);
         // Template constraint: same cascade shape as derived. Re-render
         // mount it at the schema path. This is the operational form
         // of "narrative-with-holes IS a tool" — the same primitive
         // that fires derived rules drives a segmented string's
         // reflow. No special branch beyond projecting from segments.
         if (s && s.kind === 'string') {
-          const next = projectSegmentedString(s, (p) => this.proj.values.get(p));
+          const next = projectSegmentedString(s, (p) => this._leafValueAt(p));
           if (next !== undefined) {
-            const oldVal = this.proj.values.get(dp);
+            const oldVal = this._leafValueAt(dp);
             if (Object.is(next, oldVal)) return;
             const cascadeBlock: Block = { seq: this.nextBlockSeq++, time, entries: [{ op: 'bind', path: dp, value: next }], status: 'applied' };
             this.blocks.push(cascadeBlock);
             this.blockBySeq.set(cascadeBlock.seq, cascadeBlock);
-            this.proj.values.set(dp, next);
+            this._writeBind(dp, next);
             cascaded.push(dp);
             changes.push({ path: dp, oldValue: oldVal, newValue: next, cause: 'cascade', time, sourceBlock: cascadeBlock.seq, lawId: 'segmented_string' });
             queue.push(dp);
@@ -1386,7 +1535,7 @@ export class Sequence {
           // the param type's property names, in declared order. For
           // legacy derived caps registered via `mount('cap', id, fn)`
           // there's no schema at `fnId`, so fall through to positional.
-          const targetSchema = this.proj.schemas.get(fnId);
+          const targetSchema = this._typeOf(fnId);
           if (targetSchema && targetSchema.kind === 'fn') {
             const pc = constraintOf(targetSchema, 'param');
             const pt = pc ? (pc.args[0] as Type) : null;
@@ -1402,12 +1551,12 @@ export class Sequence {
             r = (fn as any)(...args);
           }
         } catch { return; }
-        const oldVal = this.proj.values.get(dp);
+        const oldVal = this._leafValueAt(dp);
         if (Object.is(r, oldVal)) return;
         const cascadeBlock: Block = { seq: this.nextBlockSeq++, time, entries: [{ op: 'bind', path: dp, value: r }], status: 'applied' };
         this.blocks.push(cascadeBlock);
         this.blockBySeq.set(cascadeBlock.seq, cascadeBlock);
-        this.proj.values.set(dp, r);
+        this._writeBind(dp, r);
         cascaded.push(dp);
         changes.push({ path: dp, oldValue: oldVal, newValue: r, cause: 'cascade', time, sourceBlock: cascadeBlock.seq, lawId: `derived:${fnId}` });
         queue.push(dp);
@@ -1466,16 +1615,16 @@ export class Sequence {
             this.unindexBlock(b.seq);
             // Lifecycle transition: suspended → applied
             const blockPath = `_blocks.${this.identity}.${b.seq}`;
-            this.proj.values.set(`${blockPath}.status`, 'resumed');
-            this.proj.values.set(`${blockPath}.resumedAt`, time);
-            this.proj.values.set(`${blockPath}.resumedBy`, path); // the path change that triggered resume
+            this._writeBind(`${blockPath}.status`, 'resumed');
+            this._writeBind(`${blockPath}.resumedAt`, time);
+            this._writeBind(`${blockPath}.resumedBy`, path); // the path change that triggered resume
             // Clear pending conditions
             const pendingKeys = this.keys(`${blockPath}.pending`);
-            for (const pk of pendingKeys) this.proj.values.delete(`${blockPath}.pending.${pk}`);
+            for (const pk of pendingKeys) this._deleteLeafValue(`${blockPath}.pending.${pk}`);
 
             for (const e of rb.entries) {
               if (e.op === 'bind') {
-                const oldVal = this.proj.values.get(e.path);
+                const oldVal = this._leafValueAt(e.path);
                 this.applyEntry(e);
                 changes.push({ path: e.path, oldValue: oldVal, newValue: e.value, cause: 'resume', time, sourceBlock: b.seq, lawId: entry.id });
               } else {
@@ -1503,14 +1652,14 @@ export class Sequence {
             this.unindexBlock(entry.blockSeq);
             // Lifecycle transition: applied → invalidated
             const invBlockPath = `_blocks.${this.identity}.${entry.blockSeq}`;
-            this.proj.values.set(`${invBlockPath}.status`, 'invalidated');
-            this.proj.values.set(`${invBlockPath}.invalidatedAt`, time);
-            this.proj.values.set(`${invBlockPath}.invalidatedBy`, path); // the path change that broke the while
+            this._writeBind(`${invBlockPath}.status`, 'invalidated');
+            this._writeBind(`${invBlockPath}.invalidatedAt`, time);
+            this._writeBind(`${invBlockPath}.invalidatedBy`, path); // the path change that broke the while
 
             for (const e of b.entries) {
               if (e.op === 'bind') {
-                const oldVal = this.proj.values.get(e.path);
-                this.proj.values.delete(e.path);
+                const oldVal = this._leafValueAt(e.path);
+                this._deleteLeafValue(e.path);
                 invalidated.push(e.path);
                 changes.push({ path: e.path, oldValue: oldVal, newValue: undefined, cause: 'invalidate', time, sourceBlock: entry.blockSeq, lawId: entry.id });
               }
@@ -1532,8 +1681,8 @@ export class Sequence {
               // fallback.
             }
             if (b.onBreakPath) {
-              const oldVal = this.proj.values.get(b.onBreakPath);
-              this.proj.values.set(b.onBreakPath, true);
+              const oldVal = this._leafValueAt(b.onBreakPath);
+              this._writeBind(b.onBreakPath, true);
               changes.push({ path: b.onBreakPath, oldValue: oldVal, newValue: true, cause: 'invalidate', time, sourceBlock: entry.blockSeq, lawId: entry.id });
               queue.push(b.onBreakPath);
             }
@@ -1575,14 +1724,14 @@ export class Sequence {
     // 1. Exact-path schema with a ref → follow it. This is the
     //    classic "this path IS a pointer" case; the pointer
     //    dereferences to its target unconditionally.
-    const schema = this.proj.schemas.get(path);
+    const schema = this._typeOf(path);
     if (schema) { const rc = constraintOf(schema, 'ref'); if (rc) return this.get(rc.args[0] as string, visited); }
     // 2. Direct value at this path → return it. Per-install
     //    overrides live here: a sub-path under an install prefix
     //    with a direct bind short-circuits the ancestor-ref walk
     //    below, so `alice.tools.openai.auth = "sk-alice"` takes
     //    precedence over the aliased template default.
-    const direct = this.proj.values.get(path);
+    const direct = this._leafValueAt(path);
     if (direct !== undefined) return direct;
     // 3. SCHEMA-AS-VALUE: if the schema at this path narrows to a
     //    `literal(v)` constraint, that literal IS the value. Per
@@ -1613,12 +1762,10 @@ export class Sequence {
     //    not from collecting children. Same for string/number/
     //    boolean/array primitives where children are sidecars.
     const isObjectShaped = !schema || schema.kind === 'object';
-    const valueChildren = isObjectShaped ? (this.proj.values as PathMap<unknown>).childSegments(path) : [];
-    const schemaChildren = isObjectShaped && schema ? (this.proj.schemas as PathMap<Type>).childSegments(path) : [];
-    if (valueChildren.length > 0 || schemaChildren.length > 0) {
+    const childSegs = isObjectShaped ? this.proj.nodes.childSegments(path) : [];
+    if (childSegs.length > 0) {
       const segs = new Set<string>();
-      for (const s of valueChildren) segs.add(s);
-      for (const s of schemaChildren) segs.add(s);
+      for (const s of childSegs) segs.add(s);
       const obj: Record<string, unknown> = {};
       let any = false;
       for (const seg of segs) {
@@ -1644,7 +1791,7 @@ export class Sequence {
     const parts = path.split('.');
     for (let i = parts.length - 1; i > 0; i--) {
       const ancestor = parts.slice(0, i).join('.');
-      const ancSchema = this.proj.schemas.get(ancestor);
+      const ancSchema = this._typeOf(ancestor);
       if (!ancSchema) continue;
       const rc = constraintOf(ancSchema, 'ref');
       if (!rc) continue;
@@ -1680,7 +1827,7 @@ export class Sequence {
     visited ??= new Set();
     if (visited.has(path)) return undefined;
     visited.add(path);
-    const own = this.proj.schemas.get(path);
+    const own = this._typeOf(path);
     if (own) {
       // Exact-path schema with a ref — follow it to get the real
       // type. Same contract as get(): the ref dereferences.
@@ -1700,11 +1847,11 @@ export class Sequence {
     const parts = path.split('.');
     for (let i = parts.length - 1; i >= 1; i--) {
       const parentPath = parts.slice(0, i).join('.');
-      const parentSchema = this.proj.schemas.get(parentPath);
+      const parentSchema = this._typeOf(parentPath);
       if (!parentSchema) {
         // (a) Glob pattern: parent.* schema
         const globPath = parentPath + '.*';
-        const globSchema = this.proj.schemas.get(globPath);
+        const globSchema = this._typeOf(globPath);
         if (globSchema) {
           // Walk into the glob schema for segments beyond the glob slot.
           // parts[i] is the glob slot (any child of parentPath); parts[i+1..]
@@ -1749,7 +1896,7 @@ export class Sequence {
     return undefined;
   }
 
-  rawTypeAt(path: string): Type | undefined { return this.proj.schemas.get(path); }
+  rawTypeAt(path: string): Type | undefined { return this._typeOf(path); }
 
   keys(path?: string): string[] {
     // O(child-count) via PathMap's incremental children index.
@@ -1767,16 +1914,13 @@ export class Sequence {
     // containing `.*` and resolveGlob would recurse infinitely.
     const parent = path ?? '';
     const result = new Set<string>();
-    for (const seg of this.proj.values.childSegments(parent)) {
-      if (seg !== '*') result.add(seg);
-    }
-    for (const seg of this.proj.schemas.childSegments(parent)) {
+    for (const seg of this.proj.nodes.childSegments(parent)) {
       if (seg !== '*') result.add(seg);
     }
     return [...result];
   }
 
-  has(path: string): boolean { return this.proj.values.has(path); }
+  has(path: string): boolean { return this._hasLeafValue(path); }
 
   suspended(): Block[] {
     return this.blocks.filter(b => b.status === 'suspended' && !this.resumedBlocks.has(b.seq));
@@ -1971,8 +2115,8 @@ export class Sequence {
     for (let i = parts.length; i >= 1; i--) {
       const ancestorPath = parts.slice(0, i).join('.');
       const schemas = [
-        this.proj.schemas.get(ancestorPath),
-        this.proj.schemas.get(ancestorPath + '.*'),
+        this._typeOf(ancestorPath),
+        this._typeOf(ancestorPath + '.*'),
       ];
       for (const schema of schemas) {
         if (!schema) continue;
@@ -2019,7 +2163,7 @@ export class Sequence {
 
   obligations(): { path: string; type: Type }[] {
     const r: { path: string; type: Type }[] = [];
-    for (const [path, schema] of this.proj.schemas) {
+    for (const [path, schema] of this._iterateTypes()) {
       if (schema.constraints.some(c => c.op === 'ref' || c.op === 'derived')) continue;
       const v = this.get(path);
       if (v === undefined) {
@@ -2230,9 +2374,9 @@ export class Sequence {
   // new wiring in the same cascade as the mount that enabled it.
   private tryAutoWire(): string[] {
     const propagated: string[] = [];
-    for (const [gapPath, gapSchema] of this.proj.schemas) {
+    for (const [gapPath, gapSchema] of this._iterateTypes()) {
       if (gapSchema.kind === 'fn') continue;
-      if (this.proj.values.has(gapPath)) continue;
+      if (this._hasLeafValue(gapPath)) continue;
       if (constraintOf(gapSchema, 'derived')) continue;
       // Internal kernel namespaces are off-limits for auto-wiring —
       // _deps/_rdeps/_caps/_blocks/_exec are the reflective view of
@@ -2243,7 +2387,7 @@ export class Sequence {
       // registered in this process. A cap without an impl can't
       // be fired here, so we don't wire against it.
       const matches: Array<{ path: string; inputPaths: string[] }> = [];
-      for (const [toolPath, capSchema] of this.proj.schemas) {
+      for (const [toolPath, capSchema] of this._iterateTypes()) {
         if (capSchema.kind !== 'fn') continue;
         if (!this.implRegistry.has(toolPath)) continue;
         const rc = constraintOf(capSchema, 'returns');
@@ -2264,13 +2408,13 @@ export class Sequence {
       // args follow the derived convention: [fnId, ...argPaths].
       const newConstraint: Constraint = { op: 'derived', args: [toolPath, ...inputPaths] };
       const newSchema: Type = { ...gapSchema, constraints: [...gapSchema.constraints, newConstraint] };
-      this.proj.schemas.set(gapPath, newSchema);
+      this._writeSchema(gapPath, newSchema);
       for (const p of inputPaths) {
         this.addDep(p, gapPath);
         // If the input already has a value, mount() should cascade
         // from it through the new dep so the gap gets filled in the
         // same fireLaws pass — not on some future unrelated mutation.
-        if (this.proj.values.has(p)) propagated.push(p);
+        if (this._hasLeafValue(p)) propagated.push(p);
       }
     }
     return propagated;
@@ -2287,23 +2431,23 @@ export class Sequence {
     if (!this.proj.reverseDepIndex.has(dependent)) this.proj.reverseDepIndex.set(dependent, new Set());
     this.proj.reverseDepIndex.get(dependent)!.add(source);
     // Values (canonical, readable via get(), watchable by backward index)
-    const depsVal = (this.proj.values.get(`_deps.${source}`) as string[] | undefined) ?? [];
+    const depsVal = (this._leafValueAt(`_deps.${source}`) as string[] | undefined) ?? [];
     if (!depsVal.includes(dependent)) {
-      this.proj.values.set(`_deps.${source}`, [...depsVal, dependent]);
+      this._writeBind(`_deps.${source}`, [...depsVal, dependent]);
     }
-    const rdepsVal = (this.proj.values.get(`_rdeps.${dependent}`) as string[] | undefined) ?? [];
+    const rdepsVal = (this._leafValueAt(`_rdeps.${dependent}`) as string[] | undefined) ?? [];
     if (!rdepsVal.includes(source)) {
-      this.proj.values.set(`_rdeps.${dependent}`, [...rdepsVal, source]);
+      this._writeBind(`_rdeps.${dependent}`, [...rdepsVal, source]);
     }
     // Partition-tagged dep edges: _dep_partitions.{sourcePartition}.{source} = [dependent, ...]
     // Enables queries like "all deps from proc partition" without scanning the full dep index.
     // Type-aware: if the source has a schema with a `partition(p)`
     // declaration, that wins over the path prefix.
-    const srcP = partitionOf(source, this.proj.schemas.get(source));
+    const srcP = partitionOf(source, this._typeOf(source));
     const pKey = `_dep_partitions.${srcP}.${source}`;
-    const pVal = (this.proj.values.get(pKey) as string[] | undefined) ?? [];
+    const pVal = (this._leafValueAt(pKey) as string[] | undefined) ?? [];
     if (!pVal.includes(dependent)) {
-      this.proj.values.set(pKey, [...pVal, dependent]);
+      this._writeBind(pKey, [...pVal, dependent]);
     }
   }
 
@@ -2312,12 +2456,12 @@ export class Sequence {
   private applyEntry(entry: MountEntry): void {
     switch (entry.op) {
       case 'bind': {
-        if (entry.value === undefined) { this.proj.values.delete(entry.path); break; }
+        if (entry.value === undefined) { this._deleteLeafValue(entry.path); break; }
 
         // Key-derived addressing: if this path has a glob schema with a key constraint,
         // and the value is an object, derive the actual path from the key fields.
         // sessions << { user: "alice", workspace: "acme" } → sessions.alice.acme
-        const globSchema = this.proj.schemas.get(entry.path + '.*');
+        const globSchema = this._typeOf(entry.path + '.*');
         if (globSchema && typeof entry.value === 'object' && entry.value !== null && !Array.isArray(entry.value)) {
           const keyConstraint = globSchema.constraints.find(c => c.op === 'key');
           if (keyConstraint) {
@@ -2349,7 +2493,7 @@ export class Sequence {
               this.applyEntry({ op: 'bind', path: f.ref, value: f.value });
             }
             // Apply the full value locally too (the source of truth for this path)
-            this.proj.values.set(entry.path, entry.value);
+            this._writeBind(entry.path, entry.value);
             break;
           }
         }
@@ -2374,7 +2518,7 @@ export class Sequence {
             // identical projection state.
             this.implRegistry.set(entry.path, entry.value as Function);
             this.proj.capabilities.set(entry.path, true);
-            this.proj.values.set('_caps', [...this.proj.capabilities.keys()]);
+            this._writeBind('_caps', [...this.proj.capabilities.keys()]);
             break;
           }
           // resolveImpl walks ancestor refs — the impl may be
@@ -2402,7 +2546,7 @@ export class Sequence {
               const head = `${entry.path}.result`;
               const writeCommitmentField = (field: string, value: unknown) => {
                 const e: MountEntry = { op: 'bind', path: `${commitmentPath}.${field}`, value };
-                this.proj.values.set(e.path, value);
+                this._writeBind(e.path, value);
                 if (this.currentBlockEntries) this.currentBlockEntries.push(e);
               };
               writeCommitmentField('typeRef', entry.path);
@@ -2421,9 +2565,9 @@ export class Sequence {
               //      finding each invocation by the presence of an
               //      .input bind on a fn-typed path.
               const inputEntry: MountEntry = { op: 'bind', path: `${entry.path}.input`, value: entry.value };
-              const priorInput = this.proj.values.get(inputEntry.path);
+              const priorInput = this._leafValueAt(inputEntry.path);
               if (!Object.is(priorInput, inputEntry.value)) this.mutationCount++;
-              this.proj.values.set(inputEntry.path, inputEntry.value);
+              this._writeBind(inputEntry.path, inputEntry.value);
               if (this.currentBlockEntries) this.currentBlockEntries.push(inputEntry);
               const startTs = Date.now();
               try {
@@ -2467,7 +2611,7 @@ export class Sequence {
                   writeCommitmentField('status', 'fulfilled');
                 }
               } catch (e: any) {
-                this.proj.values.set(`${entry.path}.error`, e.message);
+                this._writeBind(`${entry.path}.error`, e.message);
                 writeCommitmentField('violateReason', e.message);
                 writeCommitmentField('status', 'violated');
               }
@@ -2481,9 +2625,9 @@ export class Sequence {
         // counter still — that is how the index-constraint fixpoint
         // detects convergence: if a pass produces zero mutations,
         // every body mount was a no-op and there is no more work.
-        const priorValue = this.proj.values.get(entry.path);
+        const priorValue = this._leafValueAt(entry.path);
         if (!Object.is(priorValue, entry.value)) this.mutationCount++;
-        this.proj.values.set(entry.path, entry.value);
+        this._writeBind(entry.path, entry.value);
         break;
       }
       case 'delete': {
@@ -2494,11 +2638,11 @@ export class Sequence {
         // keys(X) still report X as a child even though X itself
         // has no value. Walk the former value's fields (if it was
         // an object) and delete the matching sidecars.
-        const former = this.proj.values.get(entry.path);
-        this.proj.values.delete(entry.path);
+        const former = this._leafValueAt(entry.path);
+        this._deleteLeafValue(entry.path);
         if (former !== null && typeof former === 'object' && !Array.isArray(former)) {
           for (const k of Object.keys(former as Record<string, unknown>)) {
-            this.proj.values.delete(`${entry.path}.${k}._provenance`);
+            this._deleteLeafValue(`${entry.path}.${k}._provenance`);
           }
         }
         // SCHEMA-LITERAL CLEAR: under the unified read model, a
@@ -2508,19 +2652,19 @@ export class Sequence {
         // value re-emerges via the schema literal. Strip literal
         // constraints from the schema; if the schema becomes empty
         // (was JUST the literal), drop it entirely.
-        const sch = this.proj.schemas.get(entry.path);
+        const sch = this._typeOf(entry.path);
         if (sch && sch.constraints.some(c => c.op === 'literal')) {
           const remaining = sch.constraints.filter(c => c.op !== 'literal');
           if (remaining.length === 0) {
-            this.proj.schemas.delete(entry.path);
+            this._deleteSchemaOnly(entry.path);
           } else {
-            this.proj.schemas.set(entry.path, { ...sch, constraints: remaining });
+            this._writeSchema(entry.path, { ...sch, constraints: remaining });
           }
         }
         break;
       }
       case 'schema':
-        this.proj.schemas.set(entry.path, entry.value as Type);
+        this._writeSchema(entry.path, entry.value as Type);
         if (entry.value) {
           const type = entry.value as Type;
           // Fn-kind schema IS the declaration that a capability exists
@@ -2538,7 +2682,7 @@ export class Sequence {
           // `schema path fnType`.
           if (type.kind === 'fn' && !this.proj.capabilities.has(entry.path)) {
             this.proj.capabilities.set(entry.path, true);
-            this.proj.values.set('_caps', [...this.proj.capabilities.keys()]);
+            this._writeBind('_caps', [...this.proj.capabilities.keys()]);
           }
           // Surface the cap's policy version (R11) at a stable
           // _caps_version.{toolPath} address so consumers can read
@@ -2549,7 +2693,7 @@ export class Sequence {
             if (versionConstraint) {
               const v = (versionConstraint.args as unknown[])[0];
               if (typeof v === 'number') {
-                this.proj.values.set(`_caps_version.${entry.path}`, v);
+                this._writeBind(`_caps_version.${entry.path}`, v);
               }
             }
           }
@@ -2599,9 +2743,9 @@ export class Sequence {
           // per schema mount; the fireDerived branch handles cascade
           // on subsequent dep changes.
           if (type.kind === 'string') {
-            const seeded = projectSegmentedString(type, (p) => this.proj.values.get(p));
-            if (seeded !== undefined && seeded !== this.proj.values.get(entry.path)) {
-              this.proj.values.set(entry.path, seeded);
+            const seeded = projectSegmentedString(type, (p) => this._leafValueAt(p));
+            if (seeded !== undefined && seeded !== this._leafValueAt(entry.path)) {
+              this._writeBind(entry.path, seeded);
             }
           }
         }
@@ -2611,7 +2755,7 @@ export class Sequence {
         this.proj.capabilities.set(entry.path, true);
         if (typeof entry.value === 'function') this.implRegistry.set(entry.path, entry.value as Function);
         // Write capability list as a value — readable via get('_caps')
-        this.proj.values.set('_caps', [...this.proj.capabilities.keys()]);
+        this._writeBind('_caps', [...this.proj.capabilities.keys()]);
         break;
       case 'policy': this.proj.policies.set(entry.path, entry.value as any); break;
       case 'invalidate': this.invalidatedBlocks.add(entry.value as number); break;
@@ -2679,7 +2823,7 @@ export class Sequence {
     const matches: Rec[] = [];
 
     for (const sk of execKeys) {
-      const invoked = this.proj.values.get(`_exec.${sk}.invoked`) as string | undefined;
+      const invoked = this._leafValueAt(`_exec.${sk}.invoked`) as string | undefined;
       if (!invoked) continue;
       const calledMethod = invoked.split('.').pop() ?? '';
       if (calledMethod !== method) continue;
@@ -2690,7 +2834,7 @@ export class Sequence {
       // IO, not a later overwrite.
       const input = this.getAt(`${invoked}.input`, sk);
       const output = this.getAt(`${invoked}.result`, sk);
-      const time = (this.proj.values.get(`_exec.${sk}.time`) as number | undefined) ?? 0;
+      const time = (this._leafValueAt(`_exec.${sk}.time`) as number | undefined) ?? 0;
       if (filter && Object.keys(filter).length > 0) {
         if (input === null || typeof input !== 'object') continue;
         const obj = input as Record<string, unknown>;
@@ -2826,7 +2970,7 @@ export class Sequence {
               // Interior / multi wildcards: scan all value paths
               // and tuple-bind each match (the full matched path,
               // not a single key segment).
-              for (const [valuePath] of this.proj.values) {
+              for (const [valuePath] of this._iterateLeafValues()) {
                 if (valuePath.startsWith('_')) continue;
                 if (this.matchPathPattern(concretePath, valuePath)) {
                   next.push({ ...tuple, [varName]: valuePath });
@@ -3014,7 +3158,7 @@ export class Sequence {
       let lastMutatingValue: unknown;
       for (let pass = 0; pass < maxPasses; pass++) {
         const mutationsBefore = this.mutationCount;
-        for (const [schemaPath, schema] of this.proj.schemas) {
+        for (const [schemaPath, schema] of this._iterateTypes()) {
           const specConstraint = constraintOf(schema, 'index_spec');
           if (!specConstraint) continue;
           const spec = specConstraint.args[0] as {
@@ -3355,7 +3499,7 @@ export class Sequence {
   }
 
   private applyDefaults(path: string, value: unknown): { value: unknown; defaultedKeys: string[] } {
-    const schema = this.proj.schemas.get(path);
+    const schema = this._typeOf(path);
     if (!schema || schema.kind !== 'object' || typeof value !== 'object' || value === null || Array.isArray(value)) {
       return { value, defaultedKeys: [] };
     }
@@ -3382,7 +3526,7 @@ export class Sequence {
   private applyTransition(path: string, value: unknown): unknown {
     const policy = this.policyAt(path);
     if (!policy?.transition || policy.transition === 'replace') return value;
-    const prev = this.proj.values.get(path);
+    const prev = this._leafValueAt(path);
     if (prev === undefined || typeof value !== 'number' || typeof prev !== 'number') return value;
     return policy.transition === 'add' ? prev + value : prev * value;
   }
@@ -3445,7 +3589,7 @@ export class Sequence {
     //    be walked. This handles `tools.primary = openai.chat`
     //    where `tools.primary` itself carries `ref('openai.chat')`
     //    and the impl lives at the target, not the alias.
-    const selfSchema = this.proj.schemas.get(path);
+    const selfSchema = this._typeOf(path);
     if (selfSchema) {
       const selfRef = selfSchema.constraints.find(c => c.op === 'ref');
       if (selfRef) {
@@ -3461,7 +3605,7 @@ export class Sequence {
     const parts = path.split('.');
     for (let i = parts.length - 1; i > 0; i--) {
       const ancestor = parts.slice(0, i).join('.');
-      const schema = this.proj.schemas.get(ancestor);
+      const schema = this._typeOf(ancestor);
       if (!schema) continue;
       const rc = schema.constraints.find(c => c.op === 'ref');
       if (!rc) continue;
@@ -3490,7 +3634,7 @@ export class Sequence {
       const candidates: { path: string; impl: Function; specificity: number }[] = [];
       for (const [regPath, regImpl] of this.implRegistry) {
         if (regPath === path) continue;
-        const regSchema = this.proj.schemas.get(regPath);
+        const regSchema = this._typeOf(regPath);
         if (!regSchema || regSchema.kind !== 'fn') continue;
         const regParam = regSchema.constraints.find(c => c.op === 'param')?.args[0] as Type | undefined;
         if (!regParam) continue;
@@ -3531,7 +3675,7 @@ export class Sequence {
 
   private getCapabilities(): CapInfo[] {
     const r: CapInfo[] = [];
-    for (const [path, schema] of this.proj.schemas) {
+    for (const [path, schema] of this._iterateTypes()) {
       if (schema.kind !== 'fn' || !this.proj.capabilities.has(path)) continue;
       const p = constraintOf(schema, 'param');
       const ret = constraintOf(schema, 'returns');
@@ -3612,7 +3756,7 @@ export class Sequence {
     const prefix = cap.id + '.';
     let hasSub = false;
     let product = 1;
-    for (const [p, s] of this.proj.schemas) {
+    for (const [p, s] of this._iterateTypes()) {
       if (!p.startsWith(prefix)) continue;
       hasSub = true;
       const v = this.get(p);
