@@ -36,7 +36,7 @@ describe('glob-as-set at value position (walker #34)', () => {
     const seq = new Sequence();
     seq.mount('bind', 'users.alice', { role: 'admin' });
     seq.mount('bind', 'users.bob', { role: 'guest' });
-    seq.mount('cap', 'count', (arr: unknown[]) => arr.length);
+    seq.mount('tool', 'count', (arr: unknown[]) => arr.length);
     receive('total = count(users.*)', seq);
     expect(seq.get('total')).toBe(2);
   });

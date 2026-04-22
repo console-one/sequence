@@ -546,7 +546,7 @@ export const FT = {
    * in the tree. When all argument paths have concrete values AND the
    * function impl is registered, the derived value can be computed.
    *
-   * @param fnId — the capability ID
+   * @param fnId — the tool ID
    * @param argPaths — paths to read as arguments
    *
    * @example

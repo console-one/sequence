@@ -44,7 +44,7 @@ describe('tables', () => {
   test('AC4: derived total recomputes on row add', () => {
     const seq = new Sequence();
     seq.mount('schema', 'sum', FT.derived('add', 'a', 'b'));
-    seq.mount('cap', 'add', (a: number, b: number) => a + b);
+    seq.mount('tool', 'add', (a: number, b: number) => a + b);
     seq.mount('bind', 'a', 153.40);
     seq.mount('bind', 'b', 20.00);
     expect(seq.get('sum')).toBeCloseTo(173.40);
@@ -359,7 +359,7 @@ describe('dual links', () => {
   test('AC3: derived field recomputes on source change', () => {
     const seq = new Sequence();
     seq.mount('schema', 'formatted', FT.derived('fmt', 'raw'));
-    seq.mount('cap', 'fmt', (v: number) => `$${v.toLocaleString()}`);
+    seq.mount('tool', 'fmt', (v: number) => `$${v.toLocaleString()}`);
     seq.mount('bind', 'raw', 75000);
     expect(seq.get('formatted')).toBe('$75,000');
     seq.mount('bind', 'raw', 100000);
@@ -369,9 +369,9 @@ describe('dual links', () => {
   test('AC4: transitive cascade', () => {
     const seq = new Sequence();
     seq.mount('schema', 'overhead', FT.derived('pct', 'budget'));
-    seq.mount('cap', 'pct', (b: number) => b * 0.15);
+    seq.mount('tool', 'pct', (b: number) => b * 0.15);
     seq.mount('schema', 'total', FT.derived('add', 'budget', 'overhead'));
-    seq.mount('cap', 'add', (a: number, b: number) => a + b);
+    seq.mount('tool', 'add', (a: number, b: number) => a + b);
     seq.mount('bind', 'budget', 100000);
     expect(seq.get('overhead')).toBe(15000);
     expect(seq.get('total')).toBe(115000);
@@ -395,8 +395,8 @@ describe('dual links', () => {
 
   test('AC6: removing reference clears derived value', () => {
     const seq = new Sequence();
-    // Mount cap first, then schema, then value — order matters for cascade
-    seq.mount('cap', 'passthrough', (v: any) => v);
+    // Mount tool first, then schema, then value — order matters for cascade
+    seq.mount('tool', 'passthrough', (v: any) => v);
     seq.mount('schema', 'B.derived', FT.derived('passthrough', 'A.val'));
     seq.mount('bind', 'A.val', 42);
     expect(seq.get('B.derived')).toBe(42);

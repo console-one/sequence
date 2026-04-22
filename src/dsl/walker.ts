@@ -213,7 +213,7 @@ export function walk(
 
         // Block-level paste: evaluate the expr to a string of ft text
         // and walk it inline as if it had been written in place. The
-        // typical form is `...expand()` where expand is a capability
+        // typical form is `...expand()` where expand is a tool
         // returning a snippet. Non-string results are skipped (no-op).
         const snippet = toValue(stmt.expr, seq);
         if (typeof snippet === 'string' && snippet.length > 0) {
@@ -226,7 +226,7 @@ export function walk(
 
       case 'assign': {
         // Block-body fn def: `fname = (args) -> [stmts]` (optionally `: T`).
-        // Mount schema (fn type) + cap with live impl closure. The
+        // Mount schema (fn type) + tool with live impl closure. The
         // closure binds params from input and re-walks the body with
         // those bindings substituted into paths and value expressions.
         if (stmt.value.kind === 'function' && (stmt.value as any).body) {
@@ -261,7 +261,7 @@ export function walk(
           const opts = toOpts(stmt.modifiers);
           mounts.push(seq.mount('schema', stmt.path, fnType, opts));
           const impl = buildFnImpl(fnExpr, seq, resolve);
-          mounts.push(seq.mount('cap', stmt.path, impl, opts));
+          mounts.push(seq.mount('tool', stmt.path, impl, opts));
           break;
         }
 
@@ -339,9 +339,9 @@ export function walk(
         mounts.push(seq.mount('delete', stmt.path, undefined));
         break;
 
-      case 'cap': {
+      case 'tool': {
         const opts = stmt.when ? { where: stmt.when.map(toConstraint) } : undefined;
-        mounts.push(seq.mount('cap', stmt.path, true, opts));
+        mounts.push(seq.mount('tool', stmt.path, true, opts));
         break;
       }
 
@@ -409,7 +409,7 @@ export function walk(
         // Class desugars to mount operations:
         //   Constructor params → full type-checking where clauses
         //   while clause → lifecycle (dispose = while break → cascade invalidation)
-        //   Body statements → schemas/caps/binds at prefix.path with class lifecycle
+        //   Body statements → schemas/tools/binds at prefix.path with class lifecycle
         //   `this` = the class name prefix, `prev` = sequence getPrevious
         const prefix = stmt.name;
 
@@ -462,16 +462,16 @@ export function walk(
             if (bodyType.kind === 'fn') {
               // Method: fn type with full contract (preserves, identity,
               // equation, temporal, probability — all in the type constraints).
-              // Cap marker makes it invocable. If the method has a block
-              // body, mount the impl closure as the cap value.
+              // Tool marker makes it invocable. If the method has a block
+              // body, mount the impl closure as the tool value.
               mounts.push(seq.mount('schema', bodyPath, bodyType, mergedOpts));
               const methodBody = bodyStmt.value.kind === 'function'
                 ? (bodyStmt.value as any).body
                 : undefined;
-              const capValue = methodBody
+              const toolValue = methodBody
                 ? buildFnImpl(bodyStmt.value as any, seq, resolve)
                 : true;
-              mounts.push(seq.mount('cap', bodyPath, capValue, mergedOpts));
+              mounts.push(seq.mount('tool', bodyPath, toolValue, mergedOpts));
             } else {
               // Property: schema with full type (refinement predicates,
               // temporal constraints, etc). Bind if concrete.
@@ -491,12 +491,12 @@ export function walk(
             } else {
               mounts.push(seq.mount('schema', bodyPath, bodyType, classOpts));
             }
-          } else if (bodyStmt.kind === 'cap') {
-            // Capability declaration within class body
-            const capOpts = bodyStmt.when
+          } else if (bodyStmt.kind === 'tool') {
+            // Tool declaration within class body
+            const toolOpts = bodyStmt.when
               ? { where: [...(classOpts.where ?? []), ...bodyStmt.when.map(toConstraint)] }
               : classOpts;
-            mounts.push(seq.mount('cap', `${prefix}.${bodyStmt.path}`, true, capOpts));
+            mounts.push(seq.mount('tool', `${prefix}.${bodyStmt.path}`, true, toolOpts));
           } else if (bodyStmt.kind === 'comment') {
             comments.push({ text: bodyStmt.text, line: bodyStmt.line });
           }
@@ -827,7 +827,7 @@ function isConcrete(expr: Expr): boolean {
     }
     case 'call':
       // A call with concrete args is treated as concrete at walk time:
-      // the walker invokes the capability via toValue and binds the
+      // the walker invokes the tool via toValue and binds the
       // result. If no impl is registered the call returns undefined
       // and no bind happens — the schema still gets mounted as a gap.
       return (expr as any).args.every((a: Expr) => isConcrete(a));
@@ -958,9 +958,9 @@ function applyProject(
     // params, walks the body, and mounts whatever the body
     // statements require. No `.input` / `.result` sidecar, no
     // spurious head advance.
-    const impl = seq.capabilityAt(mapperName);
+    const impl = seq.toolAt(mapperName);
     if (typeof impl === 'function') {
-      try { impl(r); } catch { /* silent — same as cap-call invariant */ }
+      try { impl(r); } catch { /* silent — same as tool-call invariant */ }
     }
   }
 }
@@ -1248,7 +1248,7 @@ function compileBlockBodyType(
         // Recurse into conditional branches — over-approximate.
         walkStmts(stmt.body);
       }
-      // Other statement kinds (cap, delete, spread_stmt, comment,
+      // Other statement kinds (tool, delete, spread_stmt, comment,
       // import, export, class, reader, policy) contribute nothing
       // statically — they don't mount mutations the annotation
       // models, or the checker doesn't model their effects yet.
@@ -1431,7 +1431,7 @@ function buildFnImpl(
  * emitting literal-valued schemas that would lock mutable-state
  * paths against subsequent phase transitions.
  *
- * All non-schema mount ops (bind, delete, cap, policy,
+ * All non-schema mount ops (bind, delete, tool, policy,
  * invalidate) and all non-mount methods pass through unchanged.
  */
 function stripSchemaEmission(seq: Sequence): Sequence {
@@ -1470,7 +1470,7 @@ function substituteBodyStmt(stmt: Statement, bindings: Record<string, unknown>):
       } as Statement;
     case 'delete':
       return { ...stmt, path: interpolatePathString(stmt.path, bindings) };
-    case 'cap':
+    case 'tool':
       return { ...stmt, path: interpolatePathString(stmt.path, bindings) };
     case 'export':
       return { ...stmt, value: substituteBodyExpr(stmt.value, bindings) };
@@ -1584,7 +1584,7 @@ function toValue(expr: Expr, seq?: Sequence): unknown {
     case 'call': {
       // Call at value position. Builtins first (string construction
       // primitives that let fn bodies build HTTP payloads, compose
-      // config, etc.), then cap lookup.
+      // config, etc.), then tool lookup.
       const ce = expr as any;
       const args = (ce.args as Expr[]).map((a: Expr) => toValue(a, seq));
 
@@ -1598,9 +1598,9 @@ function toValue(expr: Expr, seq?: Sequence): unknown {
         case 'get':    return seq ? seq.get(args[0] as string) : undefined;
       }
 
-      // Cap lookup
+      // Tool lookup
       if (!seq) return undefined;
-      const impl = seq.capabilityAt(ce.fn);
+      const impl = seq.toolAt(ce.fn);
       if (!impl) return undefined;
       try { return (impl as any)(...args); } catch { return undefined; }
     }

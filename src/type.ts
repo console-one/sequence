@@ -14,7 +14,7 @@
  *
  * Constraints are serializable. Every constraint is { op: string, args: unknown[] }.
  * The `op` determines what the constraint checks. The `args` are the parameters.
- * No constraint contains a live function — only identifiers (refs to capabilities).
+ * No constraint contains a live function — only identifiers (refs to tools).
  *
  * This file defines the data shape. The builder is in builder.ts.
  */
@@ -522,7 +522,7 @@ export function ref(source: string): Constraint {
  * Derived: this position's value is computed by calling a function
  * with values from other paths as arguments.
  *
- * @param fnId — the capability ID to call
+ * @param fnId — the tool ID to call
  * @param argPaths — paths to read and pass as arguments
  */
 export function derived(fnId: string, ...argPaths: string[]): Constraint {
@@ -620,9 +620,9 @@ export function key(...fields: string[]): Constraint {
 }
 
 /**
- * Endpoint: the address this capability is bound to.
- * A function with an endpoint is a concrete capability instance, not a schema.
- * Two functions with different endpoints are different capabilities (compose → never).
+ * Endpoint: the address this tool is bound to.
+ * A function with an endpoint is a concrete tool instance, not a schema.
+ * Two functions with different endpoints are different tools (compose → never).
  *
  * @param url — the service endpoint URL or address
  */
@@ -631,9 +631,9 @@ export function endpoint(url: string): Constraint {
 }
 
 /**
- * Auth: the identity path this capability requires for authentication.
+ * Auth: the identity path this tool requires for authentication.
  * The referenced path must exist and contain a valid credential.
- * Different auth paths mean different capability instances with different
+ * Different auth paths mean different tool instances with different
  * rate limits, permissions, and behavioral profiles.
  *
  * @param identityPath — path to the credential (e.g., "id.keys.github_token")
@@ -644,10 +644,10 @@ export function auth(identityPath: string): Constraint {
 
 /**
  * Provenance: this path's value must have been produced by a specific
- * capability or author. Checked at mount admission — rejected or gapped
+ * tool or author. Checked at mount admission — rejected or gapped
  * if the mounting block doesn't satisfy the provenance requirement.
  *
- * @param producer — capability path or author identity that must have produced this value
+ * @param producer — tool path or author identity that must have produced this value
  * @param maxAge — optional: max ms since production (for expiry/re-validation)
  */
 export function producedBy(producer: string, maxAge?: number): Constraint {
@@ -713,10 +713,10 @@ export function concreteAt(path: string, t: number | Expr): Constraint {
 }
 
 /**
- * Version: declares the cap's policy version. Consumers can read
- * `_caps_version.{toolPath}` to know which version of a cap they are
+ * Version: declares the tool's policy version. Consumers can read
+ * `_tools_version.{toolPath}` to know which version of a tool they are
  * running. Admission requires the version to be present on writes
- * that replace the cap's fn schema, so hot-reload always increments.
+ * that replace the tool's fn schema, so hot-reload always increments.
  *
  *   version(n)
  */
@@ -725,7 +725,7 @@ export function version(n: number): Constraint {
 }
 
 /**
- * Response policy: declares how a capability's gap should be filled.
+ * Response policy: declares how a tool's gap should be filled.
  * Baked into the function type — every invocation inherits these terms.
  *
  *   timeout    — max ms before escalation (default: no timeout)

@@ -47,20 +47,20 @@ describe('gaps — obligations with priority', () => {
     expect(g[0].priority).toBeDefined();
   });
 
-  test('gap with matching capabilities includes them', () => {
+  test('gap with matching tools includes them', () => {
     const seq = new Sequence();
-    // Two candidate caps, both producing {status:'done'}. With a
+    // Two candidate tools, both producing {status:'done'}. With a
     // single match the kernel would auto-wire the gap into a derived
     // path and it would drop out of gaps() entirely. Multi-match
     // leaves it unwired — resolution belongs to a higher scope
     // handler, and gaps() still surfaces the candidates.
-    seq.append('cap', 'processA', () => 'done');
+    seq.append('tool', 'processA', () => 'done');
     seq.append('schema', 'processA', FT.fn({
       input: FT.object({ data: FT.string() }),
       output: FT.object({ status: FT.string('done') }),
       preserves: '*',
     }));
-    seq.append('cap', 'processB', () => 'done');
+    seq.append('tool', 'processB', () => 'done');
     seq.append('schema', 'processB', FT.fn({
       input: FT.object({ data: FT.string() }),
       output: FT.object({ status: FT.string('done') }),
@@ -71,16 +71,16 @@ describe('gaps — obligations with priority', () => {
     const g = seq.gaps();
     const resultGap = g.find(gap => gap.path === 'result');
     expect(resultGap).toBeDefined();
-    expect(resultGap!.capabilities.length).toBeGreaterThan(0);
+    expect(resultGap!.tools.length).toBeGreaterThan(0);
   });
 });
 
 describe('search — backward planning via Sequence', () => {
 
-  test('single capability satisfies requirement', () => {
+  test('single tool satisfies requirement', () => {
     const seq = new Sequence();
     seq.append('bind', 'data', 'raw input');
-    seq.append('cap', 'process', (d: string) => ({ status: 'done', content: d }));
+    seq.append('tool', 'process', (d: string) => ({ status: 'done', content: d }));
     seq.append('schema', 'process', FT.fn({
       input: FT.object({ data: FT.string() }),
       output: FT.object({ status: FT.string('done'), content: FT.string() }),
@@ -89,12 +89,12 @@ describe('search — backward planning via Sequence', () => {
 
     const plan = seq.search(FT.object({ status: FT.string('done'), content: FT.string() }));
     expect(plan.steps.length).toBe(1);
-    expect(plan.steps[0].capabilityId).toBe('process');
+    expect(plan.steps[0].toolId).toBe('process');
     expect(plan.steps[0].inputReady).toBe(true);
     expect(plan.meetable).toBe(true);
   });
 
-  test('no matching capability → gap in plan', () => {
+  test('no matching tool → gap in plan', () => {
     const seq = new Sequence();
     const plan = seq.search(FT.object({ exotic: FT.string() }));
     expect(plan.meetable).toBe(false);
@@ -103,7 +103,7 @@ describe('search — backward planning via Sequence', () => {
 
   test('max depth prevents infinite recursion', () => {
     const seq = new Sequence();
-    seq.append('cap', 'loop', (x: any) => x);
+    seq.append('tool', 'loop', (x: any) => x);
     seq.append('schema', 'loop', FT.fn({
       input: FT.object({ x: FT.string() }),
       output: FT.object({ x: FT.string() }),

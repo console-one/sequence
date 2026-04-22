@@ -99,12 +99,12 @@ describe('Sequence as Process', () => {
     expect(seq.append('bind', 'name', 42).ok).toBe(false);
   });
 
-  test('capability + derived execution', () => {
+  test('tool + derived execution', () => {
     const seq = new Sequence();
-    seq.append('cap', 'double', (n: number) => n * 2);
+    seq.append('tool', 'double', (n: number) => n * 2);
     seq.append('bind', 'input', 21);
     seq.append('schema', 'output', FT.derived('double', 'input'));
-    const fn = seq.capabilityAt('double')!;
+    const fn = seq.toolAt('double')!;
     seq.append('bind', 'output', fn(seq.get('input')));
     expect(seq.get('output')).toBe(42);
   });
@@ -181,10 +181,10 @@ describe('Sequence as Process', () => {
 
   test('cascade: derived auto-updates', () => {
     const seq = new Sequence();
-    seq.append('cap', 'double', (n: number) => n * 2);
+    seq.append('tool', 'double', (n: number) => n * 2);
     seq.append('bind', 'x', 5);
     seq.append('schema', 'y', FT.derived('double', 'x'));
-    const fn = seq.capabilityAt('double')!;
+    const fn = seq.toolAt('double')!;
     seq.append('bind', 'y', fn(5));
     seq.append('bind', 'x', 20);
     expect(seq.get('y')).toBe(40);
@@ -339,15 +339,15 @@ describe('Sequence.concreteness — lattice position IS probability', () => {
     expect(r2.ok).toBe(false);
   });
 
-  test('certainty: committed capability = 1 (obligation is a fact)', () => {
+  test('certainty: committed tool = 1 (obligation is a fact)', () => {
     const seq = new Sequence(() => 0);
     seq.append('schema', 'result', FT.object({ data: FT.string() }));
-    seq.append('cap', 'fetch', () => ({ data: 'hello' }));
+    seq.append('tool', 'fetch', () => ({ data: 'hello' }));
     seq.append('schema', 'fetch', FT.fn({
       input: FT.any(),
       output: FT.object({ data: FT.string() }),
     }));
-    // Capability is committed → certainty = 1 (the obligation exists)
+    // Tool is committed → certainty = 1 (the obligation exists)
     expect(seq.certainty('result')).toBe(1);
   });
 
@@ -355,7 +355,7 @@ describe('Sequence.concreteness — lattice position IS probability', () => {
     const seq = new Sequence(() => 0);
     seq.lockExpiry = 10000;
     seq.append('schema', 'result', FT.object({ data: FT.string() }));
-    seq.append('cap', 'fetch', () => ({ data: 'hello' }));
+    seq.append('tool', 'fetch', () => ({ data: 'hello' }));
     seq.append('schema', 'fetch', FT.fn({
       input: FT.any(),
       output: FT.object({ data: FT.string() }),
@@ -633,10 +633,10 @@ describe('Predicate language', () => {
 
   test('changes: cascade reports derived value change', () => {
     const seq = new Sequence();
-    seq.append('cap', 'double', (n: number) => n * 2);
+    seq.append('tool', 'double', (n: number) => n * 2);
     seq.append('bind', 'x', 5);
     seq.append('schema', 'y', FT.derived('double', 'x'));
-    const fn = seq.capabilityAt('double')!;
+    const fn = seq.toolAt('double')!;
     seq.append('bind', 'y', fn(5)); // y = 10
 
     const r = seq.append('bind', 'x', 20); // cascade: y → 40
@@ -808,7 +808,7 @@ describe('backward index — unified law dispatch', () => {
     seq.mount('schema', 'a', FT.number());
     seq.mount('schema', 'b', FT.number());
     seq.mount('schema', 'sum', FT.derived('add', 'a', 'b'));
-    seq.mount('cap', 'add', (a: number, b: number) => a + b);
+    seq.mount('tool', 'add', (a: number, b: number) => a + b);
 
     seq.mount('bind', 'a', 10);
     seq.mount('bind', 'b', 20);

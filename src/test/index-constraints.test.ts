@@ -152,16 +152,16 @@ describe('index constraints — two bindings (Cartesian product)', () => {
 
 
 describe('index constraints — cascade from nested body mount', () => {
-  test('derived cap cascades all the way through — deliver→claim pattern', async () => {
+  test('derived tool cascades all the way through — deliver→claim pattern', async () => {
     const { Sequence } = await import('../sequence');
     const { createType } = await import('../type');
 
     const seq = new Sequence();
 
-    // The claiming cap fires when req.* changes. It checks for
+    // The claiming tool fires when req.* changes. It checks for
     // status=delivered and transitions to claimed. Mimics the
-    // contextgraph claiming derived cap.
-    seq.mount('cap', 'claimingFn', (triggerPath: string, _value: unknown) => {
+    // contextgraph claiming derived tool.
+    seq.mount('tool', 'claimingFn', (triggerPath: string, _value: unknown) => {
       // Iterate reqs, find any with status=delivered, set claimed.
       const rks = seq.keys('req');
       for (const rk of rks) {
@@ -202,17 +202,17 @@ describe('index constraints — cascade from nested body mount', () => {
     expect(seq.get('req.r1.status')).toBe('claimed');
   });
 
-  test('derived cap fires after an index-class body mounts a watched path', async () => {
+  test('derived tool fires after an index-class body mounts a watched path', async () => {
     const { Sequence } = await import('../sequence');
     const { createType } = await import('../type');
 
     const seq = new Sequence();
     const derivedFires: string[] = [];
 
-    // A simple derived cap that records its invocations. Registered
+    // A simple derived tool that records its invocations. Registered
     // at `_watcher._target` with a derived constraint that watches
     // `state.*` — it should fire when state.* changes.
-    seq.mount('cap', 'recordChange', (triggerPath: string, value: unknown) => {
+    seq.mount('tool', 'recordChange', (triggerPath: string, value: unknown) => {
       derivedFires.push(`${triggerPath}=${value}`);
       return null;
     });
@@ -221,14 +221,14 @@ describe('index constraints — cascade from nested body mount', () => {
       args: ['recordChange', 'state.*'],
     }]));
 
-    // Direct mount — cascade should fire the derived cap.
+    // Direct mount — cascade should fire the derived tool.
     seq.mount('bind', 'state.foo', 1);
     expect(derivedFires).toContain('state.foo=1');
 
     // Now an index class that mounts `state.bar = 2` via a body
     // entry. This nested mount happens inside runIndexConstraints
     // at the END of mount(), AFTER the outer mount's fireLaws pass.
-    // The nested mount has its own fireLaws pass — the derived cap
+    // The nested mount has its own fireLaws pass — the derived tool
     // should still fire.
     derivedFires.length = 0;
     seq.mount('schema', 'Trigger', createType('any', [{
@@ -245,7 +245,7 @@ describe('index constraints — cascade from nested body mount', () => {
     // Add an input so the class fires.
     seq.mount('bind', 'inputs.a', 'ready');
 
-    // Verify the body mounted state.bar=2, and the derived cap
+    // Verify the body mounted state.bar=2, and the derived tool
     // fired for that change (the cascade should reach it from the
     // nested mount inside runIndexConstraints).
     expect(seq.get('state.bar')).toBe(2);

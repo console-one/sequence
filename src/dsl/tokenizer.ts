@@ -54,7 +54,7 @@ export type Token = {
 };
 
 const KEYWORDS: Record<string, TokenKind> = {
-  'type': 'TYPE', 'delete': 'DELETE', 'cap': 'CAP', 'policy': 'POLICY',
+  'type': 'TYPE', 'delete': 'DELETE', 'tool': 'CAP', 'policy': 'POLICY',
   'when': 'WHEN', 'while': 'WHILE', 'where': 'WHERE', 'onBreak': 'ONBREAK', 'by': 'BY',
   'EXISTS': 'EXISTS', 'exists': 'EXISTS', 'NOT': 'NOT', 'not': 'NOT',
   'MATCHES': 'MATCHES', 'HAS': 'HAS', 'IN': 'IN', 'in': 'IN', 'SATISFIES': 'SATISFIES',

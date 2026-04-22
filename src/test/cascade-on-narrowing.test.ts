@@ -17,7 +17,7 @@ import { Sequence, FT, createType, literal, eq } from '../index';
 describe('cascade on narrowing — Artifact 6 R-A6.6', () => {
   test('schema-with-literal fires the same dependents a bind would', () => {
     const seq = new Sequence();
-    seq.mount('cap', 'double', (n: number) => n * 2);
+    seq.mount('tool', 'double', (n: number) => n * 2);
     seq.mount('schema', 'B', FT.derived('double', 'A'));
     // Land A's value via SCHEMA mount (with a literal), not bind.
     seq.mount('schema', 'A', createType('number', [literal(7)]));

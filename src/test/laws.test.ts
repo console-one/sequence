@@ -138,7 +138,7 @@ describe('law enforcement — admission', () => {
     expect(seq.mount('schema', 'sessions.foo', createType('string'), { author: 'alice' }).ok).toBe(true);
     expect(seq.mount('bind', 'sessions.foo', 'x', { author: 'bob' }).ok).toBe(false);
     expect(seq.mount('bind', 'sessions.foo', 'x', { author: 'alice' }).ok).toBe(true);
-    expect(seq.mount('cap', 'sessions.foo.compute', () => 'noop', { author: 'bob' }).ok).toBe(true);
+    expect(seq.mount('tool', 'sessions.foo.compute', () => 'noop', { author: 'bob' }).ok).toBe(true);
   });
 });
 

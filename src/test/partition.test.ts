@@ -170,7 +170,7 @@ describe('partition reference enforcement', () => {
   test('derived constraint partition check', () => {
     const seq = new Sequence();
     seq.mount('bind', 'proc.p1.count', 5);
-    seq.mount('cap', 'addOne', (n: number) => n + 1);
+    seq.mount('tool', 'addOne', (n: number) => n + 1);
     // state path with derived from proc arg — should fail
     const r = seq.mount('schema', 'state.incremented', createType('number', [derived('addOne', 'proc.p1.count')]));
     expect(r.ok).toBe(false);

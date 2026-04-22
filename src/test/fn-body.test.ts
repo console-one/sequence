@@ -5,7 +5,7 @@
  *
  * Parse + walk + runtime. Covers:
  *   - AST: body present on FunctionExpr
- *   - Walker: schema mount + cap mount with live impl closure
+ *   - Walker: schema mount + tool mount with live impl closure
  *   - Invocation: writing input to the fn path fires the impl
  *   - Path interpolation: `{var}` segments substitute param values
  *   - Value substitution: bare name expressions matching params
@@ -66,7 +66,7 @@ describe('block-body fn def — parser', () => {
 });
 
 describe('block-body fn def — runtime', () => {
-  test('schema + cap are mounted at the fn path', () => {
+  test('schema + tool are mounted at the fn path', () => {
     const seq = new Sequence(() => 1000);
     receive(`
       bump = (name: string) -> [
@@ -76,7 +76,7 @@ describe('block-body fn def — runtime', () => {
 
     const type = seq.typeAt('bump');
     expect(type?.kind).toBe('fn');
-    expect(seq.get('_caps')).toContain('bump');
+    expect(seq.get('_tools')).toContain('bump');
   });
 
   test('invocation mounts body statements with path interpolation', () => {
@@ -136,23 +136,23 @@ describe('block-body fn def — runtime', () => {
     expect(seq.get('req.r1.response')).toBe('done');
   });
 
-  test('type-only fn (no body) IS a capability declaration; local impl remains absent', () => {
+  test('type-only fn (no body) IS a tool declaration; local impl remains absent', () => {
     const seq = new Sequence(() => 1000);
     receive(`
       handler = (p: string) -> { content: string }
     `, seq);
 
     // The type is mounted — schema-of-fn-kind is sufficient to declare
-    // the capability. No separate `cap` op needed. `_caps` reflects the
+    // the tool. No separate `tool` op needed. `_tools` reflects the
     // declared-set, which the type state makes persistent and
     // serializable across processes.
     expect(seq.typeAt('handler')?.kind).toBe('fn');
-    const caps = seq.get('_caps') as string[] | undefined;
-    expect(caps ?? []).toContain('handler');
+    const tools = seq.get('_tools') as string[] | undefined;
+    expect(tools ?? []).toContain('handler');
 
     // But the local impl registry is still empty — nothing to run
     // until an impl is bound. That's the process-local slice of the
-    // declared capability set.
+    // declared tool set.
     expect((seq as any).implRegistry.has('handler')).toBe(false);
   });
 
@@ -175,20 +175,20 @@ describe('block-body fn def — runtime', () => {
     expect(seq.get('check.result')).toBeUndefined();
   });
 
-  test('class method with block body mounts invocable cap', () => {
+  test('class method with block body mounts invocable tool', () => {
     const seq = new Sequence(() => 1000);
     receive(`
       class Counter {
         bump = (name: string) -> [
           counters.{name} = 1
         ]
-        cap bump
+        tool bump
       }
     `, seq);
 
     expect(seq.typeAt('Counter.bump')?.kind).toBe('fn');
-    const caps = seq.get('_caps') as string[] | undefined;
-    expect(caps).toContain('Counter.bump');
+    const tools = seq.get('_tools') as string[] | undefined;
+    expect(tools).toContain('Counter.bump');
 
     seq.mount('bind', 'Counter.bump', { name: 'alice' });
     expect(seq.get('counters.alice')).toBe(1);

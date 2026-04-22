@@ -31,14 +31,14 @@ describe('caller-driven execution loop', () => {
     expect(seq.gaps().length).toBe(0);
   });
 
-  test('tell with capability: cascade fills derived gaps', () => {
+  test('tell with tool: cascade fills derived gaps', () => {
     const seq = new Sequence();
-    seq.append('cap', 'double', (n: number) => n * 2);
+    seq.append('tool', 'double', (n: number) => n * 2);
     seq.append('bind', 'x', 5);
     seq.append('schema', 'y', FT.derived('double', 'x'));
 
     // Cascade should have computed y
-    const fn = seq.capabilityAt('double')!;
+    const fn = seq.toolAt('double')!;
     seq.append('bind', 'y', fn(5));
     expect(seq.get('y')).toBe(10);
   });
@@ -57,10 +57,10 @@ describe('caller-driven execution loop', () => {
     expect(seq.gaps().length).toBe(0);
   });
 
-  test('search finds capability chain', () => {
+  test('search finds tool chain', () => {
     const seq = new Sequence();
     seq.append('bind', 'data', 'raw');
-    seq.append('cap', 'process', () => ({ status: 'done' }));
+    seq.append('tool', 'process', () => ({ status: 'done' }));
     seq.append('schema', 'process', FT.fn({
       input: FT.object({ data: FT.string() }),
       output: FT.object({ status: FT.string('done') }),
@@ -72,9 +72,9 @@ describe('caller-driven execution loop', () => {
     expect(plan.steps[0].inputReady).toBe(true);
   });
 
-  test('gaps include matching capabilities', () => {
+  test('gaps include matching tools', () => {
     const seq = new Sequence();
-    seq.append('cap', 'generate', () => ({ content: 'report' }));
+    seq.append('tool', 'generate', () => ({ content: 'report' }));
     seq.append('schema', 'generate', FT.fn({
       input: FT.any(),
       output: FT.object({ content: FT.string() }),
@@ -84,6 +84,6 @@ describe('caller-driven execution loop', () => {
     const g = seq.gaps();
     const reportGap = g.find(gap => gap.path === 'report');
     expect(reportGap).toBeDefined();
-    expect(reportGap!.capabilities).toContain('generate');
+    expect(reportGap!.tools).toContain('generate');
   });
 });

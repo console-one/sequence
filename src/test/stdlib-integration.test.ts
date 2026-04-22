@@ -29,7 +29,7 @@ describe('stdlib integration: install → gap → fill → invoke', () => {
     expect(seq.gaps().some(g => g.path === 'openai.chat')).toBe(true);
 
     // Step 4: Install impl → gap closes
-    seq.mount('cap', 'openai.chat', (_input: any) => ({
+    seq.mount('tool', 'openai.chat', (_input: any) => ({
       content: 'mock response',
       tokens_used: 42,
     }));
@@ -81,7 +81,7 @@ describe('stdlib integration: install → gap → fill → invoke', () => {
     expect(seq.get('keys.openai')).toBe('sk-real-key');
 
     // Install impl for openai.chat
-    seq.mount('cap', 'openai.chat', (_input: any) => ({
+    seq.mount('tool', 'openai.chat', (_input: any) => ({
       content: 'hello from openai',
       tokens_used: 10,
     }));

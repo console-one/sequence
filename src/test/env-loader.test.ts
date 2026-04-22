@@ -2,7 +2,7 @@
  * env-loader.test.ts — `loadEnv` with impl-shim injection.
  *
  * Proves the env-kind boot pattern: `loadEnv` injects environment-
- * specific capability impls at declared paths via the `impls`
+ * specific tool impls at declared paths via the `impls`
  * parameter, and user code invokes them transparently through the
  * kernel's value-bind-to-fn-schema path. This is the minimum
  * demonstration that a Unix / Docker / Lambda / browser env can
@@ -24,7 +24,7 @@ function mountFnSchema(path: string): { op: 'schema'; path: string; value: any }
 }
 
 describe('loadEnv — impl-shim injection', () => {
-  test('impls are mounted as caps at their declared paths', () => {
+  test('impls are mounted as tools at their declared paths', () => {
     // Mount fn schemas via entries; inject impls via the impls param.
     // The schemas are env-agnostic; only the impls differ between
     // Unix / Lambda / browser.
@@ -47,12 +47,12 @@ describe('loadEnv — impl-shim injection', () => {
       },
     });
 
-    // Verify impls are registered as caps at their paths.
-    expect(seq.projection.capabilities.has('fs.readFile')).toBe(true);
-    expect(seq.projection.capabilities.has('fs.writeFile')).toBe(true);
-    expect(seq.projection.capabilities.has('schedule.every')).toBe(true);
+    // Verify impls are registered as tools at their paths.
+    expect(seq.projection.tools.has('fs.readFile')).toBe(true);
+    expect(seq.projection.tools.has('fs.writeFile')).toBe(true);
+    expect(seq.projection.tools.has('schedule.every')).toBe(true);
 
-    // Invoke each cap by binding an input at its path — the kernel's
+    // Invoke each tool by binding an input at its path — the kernel's
     // value-bind-to-fn-schema path runs the impl and mounts the
     // result at `{path}.result`.
     seq.mount('bind', 'fs.readFile', { path: '/etc/hostname' });

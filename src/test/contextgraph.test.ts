@@ -16,7 +16,7 @@ import { createType, property, isNever } from '../type';
 describe('dirty node marking', () => {
   test('AC1: writing A auto-marks dependent B stale', () => {
     const seq = new Sequence();
-    seq.mount('cap', 'double', (v: number) => v * 2);
+    seq.mount('tool', 'double', (v: number) => v * 2);
     seq.mount('schema', 'B', FT.derived('double', 'A'));
     seq.mount('bind', 'A', 5);
     expect(seq.get('B')).toBe(10);
@@ -35,7 +35,7 @@ describe('dirty node marking', () => {
 
   test('AC3: computed dependency re-executes function', () => {
     const seq = new Sequence();
-    seq.mount('cap', 'wordCount', (s: string) => s.split(' ').length);
+    seq.mount('tool', 'wordCount', (s: string) => s.split(' ').length);
     seq.mount('schema', 'C', FT.derived('wordCount', 'B'));
     seq.mount('bind', 'B', 'hello world');
     expect(seq.get('C')).toBe(2);
@@ -45,8 +45,8 @@ describe('dirty node marking', () => {
 
   test('AC4: chain resolves in topological order', () => {
     const seq = new Sequence();
-    seq.mount('cap', 'double', (v: number) => v * 2);
-    seq.mount('cap', 'inc', (v: number) => v + 1);
+    seq.mount('tool', 'double', (v: number) => v * 2);
+    seq.mount('tool', 'inc', (v: number) => v + 1);
     seq.mount('schema', 'B', FT.derived('double', 'A'));
     seq.mount('schema', 'C', FT.derived('inc', 'B'));
     seq.mount('bind', 'A', 5);
@@ -57,8 +57,8 @@ describe('dirty node marking', () => {
   test('AC5: short-circuit on value equality', () => {
     const seq = new Sequence();
     let callCount = 0;
-    seq.mount('cap', 'identity', (v: number) => { callCount++; return v; });
-    seq.mount('cap', 'downstream', (v: number) => v + 1);
+    seq.mount('tool', 'identity', (v: number) => { callCount++; return v; });
+    seq.mount('tool', 'downstream', (v: number) => v + 1);
     seq.mount('schema', 'B', FT.derived('identity', 'A'));
     seq.mount('schema', 'C', FT.derived('downstream', 'B'));
     seq.mount('bind', 'A', 5);
@@ -75,10 +75,10 @@ describe('dirty node marking', () => {
     const seq = new Sequence();
     seq.mount('schema', 'result', FT.derived('missingFn', 'input'));
     seq.mount('bind', 'input', 42);
-    // No capability for 'missingFn' — result stays unfilled
+    // No tool for 'missingFn' — result stays unfilled
     expect(seq.get('result')).toBeUndefined();
-    // Register the capability
-    seq.mount('cap', 'missingFn', (v: number) => v * 10);
+    // Register the tool
+    seq.mount('tool', 'missingFn', (v: number) => v * 10);
     // Need to re-trigger cascade by changing input
     seq.mount('bind', 'input', 42);
     expect(seq.get('result')).toBe(420);
@@ -86,7 +86,7 @@ describe('dirty node marking', () => {
 
   test('AC7: reading dependent immediately returns recomputed value', () => {
     const seq = new Sequence();
-    seq.mount('cap', 'square', (v: number) => v * v);
+    seq.mount('tool', 'square', (v: number) => v * v);
     seq.mount('schema', 'B', FT.derived('square', 'A'));
     seq.mount('bind', 'A', 4);
     // Immediately readable — cascade within mount
@@ -331,30 +331,30 @@ describe('type indexing', () => {
     expect(JSON.stringify(type)).toBeDefined();
   });
 
-  test('AC2: reverse index finds capabilities by input type', () => {
+  test('AC2: reverse index finds tools by input type', () => {
     const seq = new Sequence();
     const inputType = FT.object({ query: FT.string() });
     seq.mount('schema', 'tools.search', FT.fn({ input: inputType, output: FT.string() }));
-    seq.mount('cap', 'tools.search', true);
+    seq.mount('tool', 'tools.search', true);
     seq.mount('schema', 'tools.filter', FT.fn({ input: inputType, output: FT.string() }));
-    seq.mount('cap', 'tools.filter', true);
-    // Find capabilities whose input composes with our query type
-    const caps = [...seq.projection.capabilities.keys()].filter(toolId => {
-      const capType = seq.typeAt(toolId);
-      if (!capType || capType.kind !== 'fn') return false;
-      const paramC = capType.constraints.find(c => c.op === 'param');
+    seq.mount('tool', 'tools.filter', true);
+    // Find tools whose input composes with our query type
+    const tools = [...seq.projection.tools.keys()].filter(toolId => {
+      const toolType = seq.typeAt(toolId);
+      if (!toolType || toolType.kind !== 'fn') return false;
+      const paramC = toolType.constraints.find(c => c.op === 'param');
       if (!paramC) return false;
       return !isNever(compose(paramC.args[0] as any, inputType));
     });
-    expect(caps).toContain('tools.search');
-    expect(caps).toContain('tools.filter');
+    expect(tools).toContain('tools.search');
+    expect(tools).toContain('tools.filter');
   });
 
-  test('AC3: structural subtype matches supertype capabilities', () => {
+  test('AC3: structural subtype matches supertype tools', () => {
     const seq = new Sequence();
     const modelType = FT.object({ name: FT.string(), provider: FT.string() });
     seq.mount('schema', 'tools.model', FT.fn({ input: modelType, output: FT.string() }));
-    seq.mount('cap', 'tools.model', true);
+    seq.mount('tool', 'tools.model', true);
     // HighCapModel is a subtype (has extra field)
     const highCap = FT.object({ name: FT.string(), provider: FT.string(), maxTokens: FT.number() });
     // Subtype composes with supertype

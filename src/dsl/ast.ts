@@ -14,7 +14,7 @@ export type Statement =
   | AssignStatement        // x = expr
   | NarrowStatement        // x << expr
   | DeleteStatement        // delete x
-  | CapStatement           // cap path [when cond]
+  | CapStatement           // tool path [when cond]
   | PolicyStatement        // policy path: spec
   | ImportStatement        // import name from 'path'
   | ExportStatement        // export expr
@@ -31,7 +31,7 @@ export type Statement =
  * Spread statement: `...expr` at block/statement position.
  * The expr is evaluated at walk time and must produce a STRING of
  * ft text; that text is re-parsed and walked as if it had been
- * written inline at the spread's position. Lets a capability return
+ * written inline at the spread's position. Lets a tool return
  * a snippet of statements that paste into the surrounding block.
  */
 export type SpreadStatement = { kind: 'spread_stmt'; expr: Expr };
@@ -56,7 +56,7 @@ export type WhereStatement = { kind: 'where_stmt'; conditions: ConditionExpr[]; 
 export type AssignStatement = { kind: 'assign'; path: string; value: Expr; modifiers: Modifiers };
 export type NarrowStatement = { kind: 'narrow'; path: string; value: Expr; modifiers: Modifiers };
 export type DeleteStatement = { kind: 'delete'; path: string };
-export type CapStatement = { kind: 'cap'; path: string; when?: ConditionExpr[] };
+export type CapStatement = { kind: 'tool'; path: string; when?: ConditionExpr[] };
 export type PolicyStatement = { kind: 'policy'; path: string; spec: Record<string, unknown> };
 
 // Note: transition policies ({ transition: 'add' }) are eliminated.
@@ -68,7 +68,7 @@ export type CommentStatement = { kind: 'comment'; text: string; line: number };
 
 /** Class declaration: typed partition with constructor deps, lifecycle, methods.
  *  Desugars to: where clauses (deps), while clause (lifecycle),
- *  property schemas, method fn types + cap markers. */
+ *  property schemas, method fn types + tool markers. */
 export type ClassStatement = {
   kind: 'class';
   name: string;

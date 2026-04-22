@@ -170,8 +170,8 @@ export type Projection = {
   /** The root cell of this Sequence. Top-level paths (`state.*`,
    *  `proc.*`, etc) are children of the root. */
   rootCellId: string;
-  /** Registered capability markers — true means a capability exists at this path. Serializable. */
-  capabilities: Map<string, true>;
+  /** Registered tool markers — true means a tool exists at this path. Serializable. */
+  tools: Map<string, true>;
   policies: Map<string, { transition?: string; interpolate?: string; compact?: 'preserve' | 'default' | number }>;
   /**
    * Forward dependency cache: source path → set of dependent paths.
@@ -183,7 +183,7 @@ export type Projection = {
   reverseDepIndex: Map<string, Set<string>>;
 };
 
-/** A capability invocation that the Sequence needs but cannot execute internally. */
+/** A tool invocation that the Sequence needs but cannot execute internally. */
 export type PendingInvocation = {
   toolId: string;
   args: unknown[];
@@ -211,7 +211,7 @@ export type MountResult = {
   invalidated?: string[];
   resumed?: number[];
   cascaded?: string[];
-  /** Capabilities the Sequence needs invoked externally. */
+  /** Tools the Sequence needs invoked externally. */
   pendingInvocations?: PendingInvocation[];
   /** All path mutations during this mount. */
   changes?: PathChange[];
@@ -227,12 +227,12 @@ export type MountResult = {
    *  See specs/docs/SEQUENCE_NODES.md. */
   author?: string;
   nextWake: number;
-  /** Set ONLY when this mount triggered an async fn-cap invocation
+  /** Set ONLY when this mount triggered an async fn-calling a tool
    *  (impl returned a Promise). Resolves when the impl's Promise
    *  settles — with the resolved value on success, or {error} on
    *  reject. Fire-and-forget callers ignore it; imperative callers
-   *  that want to await the cap's outcome use this to bridge JS
-   *  Promise semantics with the kernel's async-cap result mount. */
+   *  that want to await the tool's outcome use this to bridge JS
+   *  Promise semantics with the kernel's async-tool result mount. */
   toolCompletion?: Promise<{
     ok: boolean;
     output?: unknown;
@@ -241,7 +241,7 @@ export type MountResult = {
   }>;
 };
 
-export type GapInfo = { path: string; type: Type; priority: number; capabilities: string[]; inputsNeeded?: Type };
+export type GapInfo = { path: string; type: Type; priority: number; tools: string[]; inputsNeeded?: Type };
 
 /**
  * Concreteness as a computed distribution — transient, not stored.
@@ -266,8 +266,8 @@ export interface ConcretenessDistribution {
   };
 }
 export type SearchPlan = { meetable: boolean; steps: SearchStep[]; gaps: { type: Type; reason: string }[]; probability: number };
-export type SearchStep = { capabilityId: string; requiredOutput: Type; requiredInput: Type; inputReady: boolean };
-type CapInfo = { id: string; fnType: Type; inputType: Type; outputType: Type };
+export type SearchStep = { toolId: string; requiredOutput: Type; requiredInput: Type; inputReady: boolean };
+type ToolInfo = { id: string; fnType: Type; inputType: Type; outputType: Type };
 
 // ═══════════════════════════════════════════════════════════════════════
 // BACKWARD INDEX — unified law dispatch
@@ -306,7 +306,7 @@ function emptyProjection(): Projection {
     cells,
     pathIndex,
     rootCellId: ROOT_CELL_ID,
-    capabilities: new Map(),
+    tools: new Map(),
     policies: new Map(),
     depIndex: new Map(),
     reverseDepIndex: new Map(),
@@ -525,7 +525,7 @@ export class Sequence {
    * other "react to any in-scope change" pattern, without a new BackwardEntry kind.
    */
   private globDepIndex = new Map<string, Set<string>>();
-  /** Stash for the latest async cap completion's Promise — picked up
+  /** Stash for the latest async tool completion's Promise — picked up
    *  by mount()'s result builder so imperative callers can await. */
   private pendingToolCompletion: Promise<{ ok: boolean; output?: unknown; error?: string; latencyMs: number }> | undefined;
   /** Re-entry guard for runIndexConstraints. Class bodies mount
@@ -598,8 +598,8 @@ export class Sequence {
    *  owner to each claim. Reset to undefined between outer mounts. */
   private currentBlockAuthor: string | undefined = undefined;
   /**
-   * Runtime-only capability implementations. NOT part of the serializable projection.
-   * When a Function is passed to mount('cap'), it goes here. The projection only gets
+   * Runtime-only tool implementations. NOT part of the serializable projection.
+   * When a Function is passed to mount('tool'), it goes here. The projection only gets
    * a marker (true). For external invocation, pass a descriptor or true instead of a
    * function, and handle PendingInvocations from MountResult.
    */
@@ -1067,7 +1067,7 @@ export class Sequence {
         if (blockOpts.author) this._writeBind(`${blockPath}.author`, blockOpts.author);
         if (blockOpts.label) this._writeBind(`${blockPath}.label`, blockOpts.label);
         // Mount unmet conditions as schemas — these ARE the gaps that
-        // backward inference walks. When a capability fills them, the
+        // backward inference walks. When a tool fills them, the
         // backward index triggers resume.
         for (let i = 0; i < failed.length; i++) {
           const c = failed[i];
@@ -1330,20 +1330,20 @@ export class Sequence {
     if (blockOpts?.while?.length) this.indexBlock(block);
 
     // Auto-wire any gap whose type is covered by exactly one registered
-    // capability. This lifts the kernel distinction between derived
-    // values and capability invocations — both become the same cascade
+    // tool. This lifts the kernel distinction between derived
+    // values and tool invocations — both become the same cascade
     // mechanism. Inputs already present at declared paths get added to
     // changedPaths so the very fireLaws below propagates them through
     // the just-installed dep edges, rather than waiting for some later
     // mutation to trigger the cascade.
     //
     // Gate on mount shape: wiring state changes only when a new schema
-    // or capability lands, or when a function binds to an fn-typed
+    // or tool lands, or when a function binds to an fn-typed
     // schema (impl becoming available). Plain value binds can't change
     // the wiring landscape and skip this scan — keeping the O(N²)
-    // schema×cap walk off every downstream value update.
+    // schema×tool walk off every downstream value update.
     const mayAffectWiring = entries.some(e => {
-      if (e.op === 'schema' || e.op === 'cap') return true;
+      if (e.op === 'schema' || e.op === 'tool') return true;
       if (e.op === 'bind' && typeof e.value === 'function') return true;
       return false;
     });
@@ -1358,7 +1358,7 @@ export class Sequence {
 
     // Extract execution record — the normalized knowledge graph node.
     // Only for mounts with semantic content (binds that produce values).
-    // Schema/cap/policy mounts are structural setup, not knowledge graph edges.
+    // Schema/tool/policy mounts are structural setup, not knowledge graph edges.
     if (entries.some(e => e.op === 'bind')) {
       const execPath = `_exec.${blockSeq}`;
       this._writeBind(`${execPath}.time`, time);
@@ -1650,7 +1650,7 @@ export class Sequence {
   /**
    * Re-score the working set after every mount.
    *
-   * If _process.evictionPolicy capability is registered, invoke it.
+   * If _process.evictionPolicy tool is registered, invoke it.
    * Otherwise use the default heuristic (backward inference walk from top gaps).
    * The result is WRITTEN to _process.workingSet — it's observable state,
    * not a side channel. Readers cascade from it.
@@ -1659,7 +1659,7 @@ export class Sequence {
     const budget = this._leafValueAt('_reader.maxItems') as number | undefined;
     if (!budget || budget <= 0) return { evicted: [], promoted: [] };
 
-    // Try mounted eviction policy capability first
+    // Try mounted eviction policy tool first
     const policyFn = this.implRegistry.get('_process.evictionPolicy');
     if (policyFn) {
       try {
@@ -1680,7 +1680,7 @@ export class Sequence {
     const gapList = this.gaps();
     const neededPaths = new Set<string>();
 
-    // Walk backward from each gap through capability input requirements
+    // Walk backward from each gap through tool input requirements
     for (const gap of gapList.slice(0, 10)) { // top 10 gaps
       neededPaths.add(gap.path);
       if (gap.inputsNeeded && gap.inputsNeeded.kind === 'object') {
@@ -1834,7 +1834,7 @@ export class Sequence {
         if (!ok) return;
         const fn = this.implRegistry.get(fnId);
         if (!fn) {
-          if (this.proj.capabilities.has(fnId)) {
+          if (this.proj.tools.has(fnId)) {
             pendingInvocations.push({ toolId: fnId, args, targetPath: dp });
           }
           return;
@@ -1843,10 +1843,10 @@ export class Sequence {
         try {
           // Calling-convention branch: if the target impl has a fn-typed
           // schema with an object param, it expects a single input object
-          // (the cap invocation convention — same as `mount('bind', cap,
+          // (the calling a tool convention — same as `mount('bind', tool,
           // input)`). Pack positional arg values into an object keyed by
           // the param type's property names, in declared order. For
-          // legacy derived caps registered via `mount('cap', id, fn)`
+          // legacy derived tools registered via `mount('tool', id, fn)`
           // there's no schema at `fnId`, so fall through to positional.
           const targetSchema = this._typeOf(fnId);
           if (targetSchema && targetSchema.kind === 'fn') {
@@ -2359,10 +2359,10 @@ export class Sequence {
       }
       return 1;
     }
-    // Commitment: matching capability exists
+    // Commitment: matching tool exists
     if (schema && schema.kind !== 'fn') {
-      const caps = this.getCapabilities();
-      if (caps.some(c => !isNever(compose(c.outputType, schema)) && this.proj.capabilities.has(c.id))) return 1;
+      const tools = this.getTools();
+      if (tools.some(c => !isNever(compose(c.outputType, schema)) && this.proj.tools.has(c.id))) return 1;
     }
     return 0;
   }
@@ -2376,18 +2376,18 @@ export class Sequence {
     if (val !== undefined && (!sch || check(sch, val, path).ok)) { _v.delete(path); return 1; }
     if (!sch) { const h = Math.min(this.nextWake(), this.lockExpiry) - this.clock(); _v.delete(path); return 1 - Math.exp(-0.000001 * (h > 0 && isFinite(h) ? h : 60000)); }
     if (isNever(sch)) { _v.delete(path); return 0; }
-    const caps = this.getCapabilities();
-    const matching = caps.filter(c => !isNever(compose(c.outputType, sch)));
+    const tools = this.getTools();
+    const matching = tools.filter(c => !isNever(compose(c.outputType, sch)));
     if (matching.length === 0) { _v.delete(path); return typeSpecificity(sch); }
     const dl = this.pathDeadline(path);
     const rem = dl - this.clock();
     const viable = rem > 0 || !isFinite(dl) ? 1 : 0;
     let best = typeSpecificity(sch) * viable;
-    for (const cap of matching) {
-      const rel = this.readCapProp(cap, 'reliability') ?? typeSpecificity(cap.outputType);
-      const cr = this.feasibility(cap.id, _v);
-      const inp = this.inputFeasibility(cap, sch, _v);
-      const tf = this.timeFactor(cap, rem);
+    for (const tool of matching) {
+      const rel = this.readToolProp(tool, 'reliability') ?? typeSpecificity(tool.outputType);
+      const cr = this.feasibility(tool.id, _v);
+      const inp = this.inputFeasibility(tool, sch, _v);
+      const tf = this.timeFactor(tool, rem);
       best = Math.max(best, rel * cr * inp * tf);
     }
     _v.delete(path);
@@ -2533,7 +2533,7 @@ export class Sequence {
       if (schema.constraints.some(c => c.op === 'ref' || c.op === 'derived')) continue;
       const v = this.get(path);
       if (v === undefined) {
-        // fn schema with installed impl → capability-availability obligation satisfied.
+        // fn schema with installed impl → tool-availability obligation satisfied.
         // Invocation/result gaps are separate — this only covers "can something do this."
         if (schema.kind === 'fn' && this.implRegistry.has(path)) continue;
         r.push({ path, type: schema }); continue;
@@ -2546,7 +2546,7 @@ export class Sequence {
   gaps(): GapInfo[] {
     const obs = this.obligations();
     if (obs.length === 0) return [];
-    const caps = this.getCapabilities();
+    const tools = this.getTools();
     // Lookahead horizon for time-conditioned priority (Commit 5).
     // Priorities reflect P(path realized-and-interpretable) at the
     // nearest pending temporal wake, or +60s if none is pending.
@@ -2556,7 +2556,7 @@ export class Sequence {
       ? Math.min(nextWake, now + 60_000)
       : now + 60_000;
     return obs.map(ob => {
-      const matching = caps.filter(c => !isNever(compose(c.outputType, ob.type)));
+      const matching = tools.filter(c => !isNever(compose(c.outputType, ob.type)));
       // Use cached priority if available (updated by propagateConjDelta on O(delta))
       let priority = this.gapPriorityCache.get(ob.path);
       if (priority === undefined) {
@@ -2583,20 +2583,20 @@ export class Sequence {
       return {
         path: ob.path, type: ob.type,
         priority,
-        capabilities: matching.map(c => c.id),
+        tools: matching.map(c => c.id),
         inputsNeeded: matching.length > 0 ? backwardInfer(matching[0].fnType, ob.type) : undefined,
       };
     }).sort((a, b) => b.priority - a.priority);
   }
 
   /**
-   * Branch-and-bound search through capability graph.
+   * Branch-and-bound search through tool graph.
    * Explores multiple paths, prunes when cumulative probability drops
    * below the best complete plan found so far. Returns the globally
    * best plan, not just the first one found.
    */
   search(requiredType: Type, maxDepth = 5): SearchPlan {
-    const caps = this.getCapabilities();
+    const tools = this.getTools();
     let bestPlan: SearchPlan | null = null;
 
     const explore = (
@@ -2611,7 +2611,7 @@ export class Sequence {
       if (visited.has(key)) return;
       visited.add(key);
 
-      const matches = caps.filter(c => !isNever(compose(c.outputType, req)));
+      const matches = tools.filter(c => !isNever(compose(c.outputType, req)));
       if (matches.length === 0) {
         // Dead end — record as a plan with gaps
         const plan: SearchPlan = {
@@ -2625,18 +2625,18 @@ export class Sequence {
 
       // Sort candidates by score descending (best-first search)
       const scored = matches.map(c => ({
-        cap: c,
-        score: (this.readCapProp(c, 'reliability') ?? typeSpecificity(c.outputType)) * this.feasibility(c.id),
+        tool: c,
+        score: (this.readToolProp(c, 'reliability') ?? typeSpecificity(c.outputType)) * this.feasibility(c.id),
       })).sort((a, b) => b.score - a.score);
 
-      for (const { cap, score } of scored) {
+      for (const { tool, score } of scored) {
         const branchProb = probAcc * score;
         // Prune: this branch can't beat the current best
         if (bestPlan && branchProb <= bestPlan.probability) continue;
 
-        const inputReq = backwardInfer(cap.fnType, req);
+        const inputReq = backwardInfer(tool.fnType, req);
         const inputReady = this.isInputAvailable(inputReq);
-        const step: SearchStep = { capabilityId: cap.id, requiredOutput: req, requiredInput: inputReq, inputReady };
+        const step: SearchStep = { toolId: tool.id, requiredOutput: req, requiredInput: inputReq, inputReady };
         const branchSteps = [...stepsAcc, step];
 
         if (inputReady || isAny(inputReq)) {
@@ -2644,15 +2644,15 @@ export class Sequence {
           const plan: SearchPlan = { meetable: true, steps: branchSteps, probability: branchProb, gaps: [] };
           if (!bestPlan || branchProb > bestPlan.probability) bestPlan = plan;
         } else {
-          // Recurse: need to find capabilities for the input
-          explore(inputReq, depth + 1, cap.id, branchSteps, branchProb, visited);
+          // Recurse: need to find tools for the input
+          explore(inputReq, depth + 1, tool.id, branchSteps, branchProb, visited);
         }
       }
       visited.delete(key);
     };
 
     explore(requiredType, 0, 'root', [], 1, new Set());
-    return bestPlan ?? { meetable: false, steps: [], gaps: [{ type: requiredType, reason: 'no capabilities' }], probability: 0 };
+    return bestPlan ?? { meetable: false, steps: [], gaps: [{ type: requiredType, reason: 'no tools' }], probability: 0 };
   }
 
   /**
@@ -2707,28 +2707,28 @@ export class Sequence {
 
   // ═══ CAPABILITY AUTO-WIRING ════════════════════════════════════
   //
-  // Derived values and capability invocations are the same operation:
+  // Derived values and tool invocations are the same operation:
   // a path needs a value, a fn can produce it, its inputs are (or
   // will be) available, fire it. For safe sole-match cases the kernel
   // now wires them automatically — a gap whose required type is
-  // covered by exactly ONE cap's output type gains a `derived`
-  // constraint citing the cap and its input property paths. From
+  // covered by exactly ONE tool's output type gains a `derived`
+  // constraint citing the tool and its input property paths. From
   // there the existing cascade does the rest: when any input path
   // gets a value, fireLaws picks up the dependency, fireDerived
   // collects the remaining inputs, packs them into an object matching
-  // the cap's param type, and invokes.
+  // the tool's param type, and invokes.
   //
-  // When multiple caps could fill the gap the kernel does NOT wire.
+  // When multiple tools could fill the gap the kernel does NOT wire.
   // Ambiguity is resolution that belongs to a handler at some
   // containing scope juncture — a session, process, or outer
   // Sequence — not to the kernel. Unresolved gaps propagate outward
   // through the same mechanism readers use today.
   //
   // Preconditions the kernel relies on:
-  //   - The cap's fn-typed schema is present (carries param + returns).
+  //   - The tool's fn-typed schema is present (carries param + returns).
   //   - The impl is registered (implRegistry.has(toolPath)) — without
   //     it we can't fire, so we also can't safely wire.
-  //   - The cap impl is a pure function of its declared param type.
+  //   - The tool impl is a pure function of its declared param type.
   //     Any `seq.get()` inside the closure is a hidden dependency the
   //     dep graph won't see, and attempt-2 (reverted) failed exactly
   //     there. See services/contextgraph/src/auth.ts for the closure-
@@ -2745,19 +2745,19 @@ export class Sequence {
       if (this._hasLeafValue(gapPath)) continue;
       if (constraintOf(gapSchema, 'derived')) continue;
       // Internal kernel namespaces are off-limits for auto-wiring —
-      // _deps/_rdeps/_caps/_blocks/_exec are the reflective view of
+      // _deps/_rdeps/_tools/_blocks/_exec are the reflective view of
       // the Sequence's own state, not application gaps to fill.
       if (gapPath.startsWith('_')) continue;
 
-      // Find caps whose output covers gapSchema AND whose impl is
-      // registered in this process. A cap without an impl can't
+      // Find tools whose output covers gapSchema AND whose impl is
+      // registered in this process. A tool without an impl can't
       // be fired here, so we don't wire against it.
       const matches: Array<{ path: string; inputPaths: string[] }> = [];
-      for (const [toolPath, capSchema] of this._iterateTypes()) {
-        if (capSchema.kind !== 'fn') continue;
+      for (const [toolPath, toolSchema] of this._iterateTypes()) {
+        if (toolSchema.kind !== 'fn') continue;
         if (!this.implRegistry.has(toolPath)) continue;
-        const rc = constraintOf(capSchema, 'returns');
-        const pc = constraintOf(capSchema, 'param');
+        const rc = constraintOf(toolSchema, 'returns');
+        const pc = constraintOf(toolSchema, 'param');
         if (!rc || !pc) continue;
         const outputType = rc.args[0] as Type;
         const paramType = pc.args[0] as Type;
@@ -2870,29 +2870,29 @@ export class Sequence {
         // Write-path classification for fn-typed schemas:
         //   bind(path, fn)    when value is itself a function →
         //     REGISTER the fn as the impl for this path. Equivalent
-        //     to the legacy `mount('cap', path, fn)` — the two paths
+        //     to the legacy `mount('tool', path, fn)` — the two paths
         //     converge on exactly the same state (implRegistry entry
-        //     + capabilities marker + _caps list). This lets callers
-        //     treat "a capability is a mounted coherent function" as
-        //     the model, without a distinct `cap` op, which is the
-        //     direction the `cap`-op collapse work is heading.
+        //     + tools marker + _tools list). This lets callers
+        //     treat "a tool is a mounted coherent function" as
+        //     the model, without a distinct `tool` op, which is the
+        //     direction the `tool`-op collapse work is heading.
         //
         //   bind(path, value) when value is NOT a function → INVOKE
         //     the already-registered impl with `value` as the input.
-        //     The capability produces the output; the schema stays;
+        //     The tool produces the output; the schema stays;
         //     value goes to `.input`, result to `.result`.
         if (schema && schema.kind === 'fn') {
           if (typeof entry.value === 'function') {
-            // Register-as-impl path. Mirrors the cap dispatch below
-            // so `bind(path, fn)` and `cap(path, fn)` produce
+            // Register-as-impl path. Mirrors the tool dispatch below
+            // so `bind(path, fn)` and `tool(path, fn)` produce
             // identical projection state.
             this.implRegistry.set(entry.path, entry.value as Function);
-            this.proj.capabilities.set(entry.path, true);
-            this._writeBind('_caps', [...this.proj.capabilities.keys()]);
+            this.proj.tools.set(entry.path, true);
+            this._writeBind('_tools', [...this.proj.tools.keys()]);
             break;
           }
           // resolveImpl walks ancestor refs — the impl may be
-          // registered at a shared cap path while `entry.path` is
+          // registered at a shared tool path while `entry.path` is
           // a session install alias. Side effects still record at
           // entry.path below, keeping session state isolated.
           const impl = this.resolveImpl(entry.path);
@@ -2951,7 +2951,7 @@ export class Sequence {
                   // so mount()'s result builder can surface it on
                   // MountResult.toolCompletion — imperative callers
                   // await this to bridge JS Promise semantics with
-                  // the substrate's async cap result mount.
+                  // the substrate's async tool result mount.
                   const resultPath = head;
                   const errorPath = `${entry.path}.error`;
                   this.pendingToolCompletion = (output as Promise<unknown>).then((resolved) => {
@@ -3029,33 +3029,33 @@ export class Sequence {
         if (!Object.is(priorVal, newVal)) this.mutationCount++;
         if (entry.value) {
           const type = entry.value as Type;
-          // Fn-kind schema IS the declaration that a capability exists
-          // at this path. `capabilities` is the declared-set (type
+          // Fn-kind schema IS the declaration that a tool exists
+          // at this path. `tools` is the declared-set (type
           // state; persistent across processes); `implRegistry` is the
           // per-process local scope of what impls are cached here.
           // They serve different questions:
-          //   capabilities.has(x) — is X a declared capability the
+          //   tools.has(x) — is X a declared tool the
           //                         system knows about, even if this
           //                         process can't currently run it?
           //   implRegistry.has(x) — can THIS process invoke X right now?
           // A schema mount of an fn-typed value populates the declared
-          // set as a side effect — no separate cap declaration needed.
-          // The legacy `cap path true` becomes redundant with
+          // set as a side effect — no separate tool declaration needed.
+          // The legacy `tool path true` becomes redundant with
           // `schema path fnType`.
-          if (type.kind === 'fn' && !this.proj.capabilities.has(entry.path)) {
-            this.proj.capabilities.set(entry.path, true);
-            this._writeBind('_caps', [...this.proj.capabilities.keys()]);
+          if (type.kind === 'fn' && !this.proj.tools.has(entry.path)) {
+            this.proj.tools.set(entry.path, true);
+            this._writeBind('_tools', [...this.proj.tools.keys()]);
           }
-          // Surface the cap's policy version (R11) at a stable
-          // _caps_version.{toolPath} address so consumers can read
-          // which version of a cap they are running. Hot-reload of
+          // Surface the tool's policy version (R11) at a stable
+          // _tools_version.{toolPath} address so consumers can read
+          // which version of a tool they are running. Hot-reload of
           // the schema replaces the stored version with the new one.
           if (type.kind === 'fn') {
             const versionConstraint = type.constraints.find(c => c.op === 'version');
             if (versionConstraint) {
               const v = (versionConstraint.args as unknown[])[0];
               if (typeof v === 'number') {
-                this._writeBind(`_caps_version.${entry.path}`, v);
+                this._writeBind(`_tools_version.${entry.path}`, v);
               }
             }
           }
@@ -3113,12 +3113,12 @@ export class Sequence {
         }
         break;
       }
-      case 'cap':
+      case 'tool':
         // Projection gets a serializable marker; live functions go to implRegistry
-        this.proj.capabilities.set(entry.path, true);
+        this.proj.tools.set(entry.path, true);
         if (typeof entry.value === 'function') this.implRegistry.set(entry.path, entry.value as Function);
-        // Write capability list as a value — readable via get('_caps')
-        this._writeBind('_caps', [...this.proj.capabilities.keys()]);
+        // Write tool list as a value — readable via get('_tools')
+        this._writeBind('_tools', [...this.proj.tools.keys()]);
         break;
       case 'narrow': {
         // CONSTRAINT_GRAPH.md Artifact 6 R-A6.1. Compose constraints
@@ -3563,8 +3563,8 @@ export class Sequence {
           // satisfied an exclusion filter that now invalidates a
           // remaining tuple. Without the re-eval, both task A and
           // task B fire bodies even though task A's mount of
-          // `cap.input` was supposed to make task B's
-          // `notExists(cap.input)` filter false.
+          // `tool.input` was supposed to make task B's
+          // `notExists(tool.input)` filter false.
           //
           // The `seen` set guards against re-firing tuples that
           // already executed this pass (re-eval would surface them
@@ -3609,7 +3609,7 @@ export class Sequence {
         // Zero real value changes this pass → fixpoint reached.
         if (this.mutationCount === mutationsBefore) return;
       }
-      // If we hit the pass cap the binding space is likely
+      // If we hit the pass tool the binding space is likely
       // non-convergent (a class mounts something that re-triggers
       // its own tuples). Surface as an error with the offending
       // mount so the rule can be debugged — "class X kept writing
@@ -3933,7 +3933,7 @@ export class Sequence {
     return undefined;
   }
 
-  capabilityAt(path: string): Function | undefined {
+  toolAt(path: string): Function | undefined {
     const exact = this.implRegistry.get(path);
     if (exact) return exact;
     const parts = path.split('.');
@@ -3946,21 +3946,21 @@ export class Sequence {
 
   /**
    * Resolve an impl for a path that may be a session-install ref
-   * alias into a shared cap. Walks ancestor paths looking for
+   * alias into a shared tool. Walks ancestor paths looking for
    * either (a) a direct impl in the implRegistry, or (b) a schema
    * with a `ref` constraint — in which case it rewrites the lookup
    * as `{refTarget}.{suffix}` and recurses. This is what makes
-   * `sessions.alice.tools.openai.chat` invoke the cap that was
+   * `sessions.alice.tools.openai.chat` invoke the tool that was
    * actually registered at `openai.chat`: the session's path is an
    * alias, the impl lookup follows the ancestor ref, finds the
-   * cap's registered function, and returns it.
+   * tool's registered function, and returns it.
    *
    * Cycle-safe via the visited set.
    *
    * Critically, the CALLER (applyEntry's fn invocation branch)
    * still records `.input`/`.result` at the ORIGINAL entry path —
    * so side-effects land in the session's namespace, not the
-   * cap's. That's what keeps per-session usage counters, law
+   * tool's. That's what keeps per-session usage counters, law
    * frames, and contract priors isolated across installs.
    */
   private resolveImpl(path: string, visited?: Set<string>): Function | undefined {
@@ -3969,7 +3969,7 @@ export class Sequence {
     visited.add(path);
     // 1. Exact path — the caller is asking for this specific path's
     //    impl, so only exact matches count. (We do NOT walk
-    //    ancestors for direct impls the way `capabilityAt` does,
+    //    ancestors for direct impls the way `toolAt` does,
     //    because that would make `.result` and `.input` sub-paths
     //    resolve to the parent fn's impl and trigger a recursive
     //    re-invocation on every fn's output. Exact-path-only
@@ -3992,7 +3992,7 @@ export class Sequence {
     //    ancestor is a ref alias (e.g. sessions.alice.tools.openai
     //    → openai), rewrite the lookup as `{refTarget}.{suffix}`
     //    and recurse. The recursion then does exact-path lookup
-    //    at the resolved target, finding the cap's impl there.
+    //    at the resolved target, finding the tool's impl there.
     const parts = path.split('.');
     for (let i = parts.length - 1; i > 0; i--) {
       const ancestor = parts.slice(0, i).join('.');
@@ -4064,10 +4064,10 @@ export class Sequence {
     return dl;
   }
 
-  private getCapabilities(): CapInfo[] {
-    const r: CapInfo[] = [];
+  private getTools(): ToolInfo[] {
+    const r: ToolInfo[] = [];
     for (const [path, schema] of this._iterateTypes()) {
-      if (schema.kind !== 'fn' || !this.proj.capabilities.has(path)) continue;
+      if (schema.kind !== 'fn' || !this.proj.tools.has(path)) continue;
       const p = constraintOf(schema, 'param');
       const ret = constraintOf(schema, 'returns');
       r.push({
@@ -4091,23 +4091,23 @@ export class Sequence {
     return true;
   }
 
-  private readCapProp(cap: CapInfo, name: string): number | undefined {
-    const dist = constraintsOf(cap.fnType, 'distribution').find(c => c.args[0] === name);
+  private readToolProp(tool: ToolInfo, name: string): number | undefined {
+    const dist = constraintsOf(tool.fnType, 'distribution').find(c => c.args[0] === name);
     if (dist) {
       const [, family, params] = dist.args as [string, string, Record<string, number>];
-      const stored = this.get(`${cap.id}._prior.${name}`) as Record<string, number> | undefined;
+      const stored = this.get(`${tool.id}._prior.${name}`) as Record<string, number> | undefined;
       return posteriorPredictive(family, stored ?? params);
     }
-    const pr = constraintsOf(cap.fnType, 'prior').find(c => c.args[0] === name);
+    const pr = constraintsOf(tool.fnType, 'prior').find(c => c.args[0] === name);
     if (pr) {
       const [, family, initial] = pr.args as [string, string, Record<string, number>];
-      const stored = this.get(`${cap.id}._prior.${name}`) as Record<string, number> | undefined;
+      const stored = this.get(`${tool.id}._prior.${name}`) as Record<string, number> | undefined;
       return posteriorPredictive(family, stored ?? initial);
     }
-    const c = constraintsOf(cap.fnType, 'computable').find(c => c.args[0] === name);
+    const c = constraintsOf(tool.fnType, 'computable').find(c => c.args[0] === name);
     if (!c) return undefined;
     const bindings = new Map<string, number>();
-    const paramC = constraintOf(cap.fnType, 'param');
+    const paramC = constraintOf(tool.fnType, 'param');
     if (paramC && (paramC.args[0] as Type).kind === 'object') {
       for (const p of properties(paramC.args[0] as Type)) {
         const v = this.get(p.key);
@@ -4118,12 +4118,12 @@ export class Sequence {
     return result ? Math.min(1, Math.max(0, result.value)) : undefined;
   }
 
-  private timeFactor(cap: CapInfo, remainingMs: number): number {
+  private timeFactor(tool: ToolInfo, remainingMs: number): number {
     if (!isFinite(remainingMs) || remainingMs === Infinity) return 1;
     if (remainingMs <= 0) return 0;
-    const dist = constraintsOf(cap.fnType, 'distribution').find(c => c.args[0] === 'time');
+    const dist = constraintsOf(tool.fnType, 'distribution').find(c => c.args[0] === 'time');
     if (dist) return cdf(dist.args[1] as string, remainingMs, dist.args[2] as Record<string, number>);
-    const tc = constraintsOf(cap.fnType, 'temporal');
+    const tc = constraintsOf(tool.fnType, 'temporal');
     if (tc.length > 0) {
       const [dir, , bound] = tc[0].args as [string, string, unknown];
       if (dir === 'gt') {
@@ -4132,7 +4132,7 @@ export class Sequence {
         if (r) { const t = (r.hi ?? r.value) - this.clock(); return t >= remainingMs ? 0 : 1 - (t / remainingMs); }
       }
     }
-    const c = constraintsOf(cap.fnType, 'computable').find(c => c.args[0] === 'time');
+    const c = constraintsOf(tool.fnType, 'computable').find(c => c.args[0] === 'time');
     if (!c) return 1;
     const bindings = new Map<string, number>();
     const r = evaluateExpr(c.args[1] as any, bindings);
@@ -4141,10 +4141,10 @@ export class Sequence {
     return est >= remainingMs ? 0 : 1 - (est / remainingMs);
   }
 
-  private inputFeasibility(cap: CapInfo, gapType: Type, visited: Set<string>): number {
-    const hasP = constraintsOf(cap.fnType, 'preserves').length > 0;
-    if (hasP) return this.typeFeasibility(backwardInfer(cap.fnType, gapType), visited);
-    const prefix = cap.id + '.';
+  private inputFeasibility(tool: ToolInfo, gapType: Type, visited: Set<string>): number {
+    const hasP = constraintsOf(tool.fnType, 'preserves').length > 0;
+    if (hasP) return this.typeFeasibility(backwardInfer(tool.fnType, gapType), visited);
+    const prefix = tool.id + '.';
     let hasSub = false;
     let product = 1;
     for (const [p, s] of this._iterateTypes()) {
@@ -4154,7 +4154,7 @@ export class Sequence {
       if (v === undefined || !check(s, v, p).ok) product *= this.feasibility(p, visited);
     }
     if (hasSub) return product;
-    return this.typeFeasibility(backwardInfer(cap.fnType, gapType), visited);
+    return this.typeFeasibility(backwardInfer(tool.fnType, gapType), visited);
   }
 
   private typeFeasibility(type: Type, visited: Set<string>): number {

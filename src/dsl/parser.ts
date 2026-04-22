@@ -28,7 +28,7 @@ export class Parser {
   /**
    * Consume any token whose `.value` looks like an identifier
    * (matches `[a-zA-Z_]\w*`). Used in places where common words
-   * like `policy`, `type`, `cap`, `user` — which the tokenizer
+   * like `policy`, `type`, `tool`, `user` — which the tokenizer
    * maps to keyword kinds — should still be usable as plain
    * identifiers (e.g. class index variable names).
    */
@@ -98,12 +98,12 @@ export class Parser {
       return { kind: 'delete', path: this.parsePath() };
     }
 
-    // cap path [when cond]
+    // tool path [when cond]
     if (this.at('CAP')) {
       this.advance();
       const path = this.parsePath();
       const when = this.at('WHEN') ? this.parseWhenClause() : undefined;
-      return { kind: 'cap', path, when };
+      return { kind: 'tool', path, when };
     }
 
     // policy path: spec

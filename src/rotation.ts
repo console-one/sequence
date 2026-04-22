@@ -20,7 +20,7 @@
  * The same function rotates session→archive on a server, archive→
  * cold on the same process, OR moves blocks across a federation
  * (destination = `_peers.{otherSeq}.path`) — peer transports route
- * the cap dispatch the same way local resolution does.
+ * the tool dispatch the same way local resolution does.
  */
 
 import type { Sequence } from './sequence';

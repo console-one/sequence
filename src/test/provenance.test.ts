@@ -2,7 +2,7 @@
  * provenance.test.ts — Provenance enforcement at mount admission.
  *
  * A producedBy constraint on a schema means: the value at this path
- * must have been produced by a specific capability or author.
+ * must have been produced by a specific tool or author.
  * Checked at mount time — not after the fact.
  */
 
@@ -56,7 +56,7 @@ describe('provenance enforcement', () => {
       { op: 'param', args: [createType('object', [property('rawKey', FT.string())])] },
       { op: 'returns', args: [FT.string()] },
     ]));
-    seq.mount('cap', 'validateOpenAIKey', (input: any) => input.rawKey);
+    seq.mount('tool', 'validateOpenAIKey', (input: any) => input.rawKey);
 
     // Invoke the validator — this creates an exec record
     seq.mount('bind', 'validateOpenAIKey', { rawKey: 'sk-test-key' }, {

@@ -3,7 +3,7 @@
  *
  * Before this fix the walker's toValue had no case for CallExpr, so
  * `x = fn(a, b)` either skipped the bind or stored undefined. Now a
- * call at value position looks up the capability through the Sequence
+ * call at value position looks up the tool through the Sequence
  * and invokes it synchronously, binding the result.
  */
 
@@ -11,23 +11,23 @@ import { Sequence } from '../sequence';
 import { receive } from '../dsl/walker';
 
 describe('CallExpr at value position (walker #33)', () => {
-  test('invokes a registered cap and binds the result', () => {
+  test('invokes a registered tool and binds the result', () => {
     const seq = new Sequence();
-    seq.mount('cap', 'double', (n: number) => n * 2);
+    seq.mount('tool', 'double', (n: number) => n * 2);
     receive('x = double(21)', seq);
     expect(seq.get('x')).toBe(42);
   });
 
   test('supports multiple arguments', () => {
     const seq = new Sequence();
-    seq.mount('cap', 'sum', (a: number, b: number) => a + b);
+    seq.mount('tool', 'sum', (a: number, b: number) => a + b);
     receive('y = sum(10, 32)', seq);
     expect(seq.get('y')).toBe(42);
   });
 
   test('result can be used inside a spread', () => {
     const seq = new Sequence();
-    seq.mount('cap', 'range', (n: number) => Array.from({ length: n }, (_, i) => i + 1));
+    seq.mount('tool', 'range', (n: number) => Array.from({ length: n }, (_, i) => i + 1));
     receive('nums = [0, ...range(3), 99]', seq);
     expect(seq.get('nums')).toEqual([0, 1, 2, 3, 99]);
   });

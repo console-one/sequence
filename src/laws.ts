@@ -27,7 +27,7 @@
  * discipline as admission's systemInternal flag.
  *
  * Future triggers (same pattern):
- *   'cap_completion' — after fn-invocation result lands. Bindings
+ *   'tool_completion' — after fn-invocation result lands. Bindings
  *                      $result, $latency_ms, $input, $call_seq.
  *   'write_observe'  — after a write successfully lands. Bindings
  *                      $path, $author, $value, $time.
@@ -97,7 +97,7 @@ function effectiveTrigger(spec: LawSpec): string | undefined {
  * Walk every schema whose path pattern covers `targetPath` and
  * collect the laws whose effective trigger matches `trigger`. Same
  * path-covering mechanism for every trigger — admission, read,
- * cap_completion, etc. Glob schemas at ancestor paths reach specific
+ * tool_completion, etc. Glob schemas at ancestor paths reach specific
  * targets via the `*`-substitution in `resolveInstancePath`.
  */
 export function collectLaws(

@@ -100,8 +100,8 @@ describe('DSL Tokenizer', () => {
     expect(tokens[0].kind).toBe('FORALL');
   });
 
-  test('tokenizes cap and policy', () => {
-    const tokens = tokenize('cap FileSystem.read');
+  test('tokenizes tool and policy', () => {
+    const tokens = tokenize('tool FileSystem.read');
     expect(tokens.map(t => t.kind)).toEqual(['CAP', 'IDENT', 'DOT', 'IDENT', 'EOF']);
   });
 
@@ -208,9 +208,9 @@ describe('DSL Parser', () => {
     expect(stmts[0].kind).toBe('delete');
   });
 
-  test('parses cap', () => {
-    const stmts = parse('cap Worker.heartbeat');
-    expect(stmts[0].kind).toBe('cap');
+  test('parses tool', () => {
+    const stmts = parse('tool Worker.heartbeat');
+    expect(stmts[0].kind).toBe('tool');
     expect((stmts[0] as any).path).toBe('Worker.heartbeat');
   });
 
@@ -399,10 +399,10 @@ describe('ft text → Sequence (end-to-end)', () => {
     expect(seq.get('x')).toBeUndefined();
   });
 
-  test('cap registers capability', () => {
+  test('tool registers tool', () => {
     const seq = new Sequence();
-    receive('cap Worker.heartbeat', seq);
-    expect(seq.projection.capabilities.has('Worker.heartbeat')).toBe(true);
+    receive('tool Worker.heartbeat', seq);
+    expect(seq.projection.tools.has('Worker.heartbeat')).toBe(true);
   });
 
   test('when modifier creates where clause', () => {

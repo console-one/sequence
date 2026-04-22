@@ -6,13 +6,13 @@
  * exact function to produce a Sequence. What differs between
  * environments is NOT the loader — it's the snapshot contents
  * (the root type mounted at boot) and the impl shims injected
- * as capabilities at known paths.
+ * as tools at known paths.
  *
  * The Sequence is typed at the root: every Sequence either
  * instantiates a class (user session, agent, env, server) or
  * represents a typed data range. Neither shape needs a TypeScript
  * wrapper around Sequence to add "running" behavior — lifecycle
- * (tick, sync, heartbeat, dispose) is mounted as laws/caps on
+ * (tick, sync, heartbeat, dispose) is mounted as laws/tools on
  * the root type, not wrapped around the kernel.
  */
 
@@ -27,7 +27,7 @@ export type EnvOpts = {
   /** Import resolver for loading .ft files referenced from snapshots. */
   resolve?: ImportResolver;
   /**
-   * Env-specific capability implementations to inject at known paths
+   * Env-specific tool implementations to inject at known paths
    * after snapshots mount. The snapshot's class definitions reference
    * these paths declaratively; the loader plugs in the concrete
    * runtime (filesystem, scheduler, HTTP, storage) that each env
@@ -40,7 +40,7 @@ export type EnvOpts = {
 
 /**
  * Boot a Sequence with a clock, replay any persisted entries,
- * parse any ft text snapshots, and inject capability impls. Returns
+ * parse any ft text snapshots, and inject tool impls. Returns
  * a plain Sequence — no wrapper type. Callers talk to the sequence
  * directly via `receive()`, `hoist()`, and the kernel API.
  *
@@ -64,7 +64,7 @@ export function loadEnv(clock: () => number, opts?: EnvOpts): Sequence {
 
   if (opts?.impls) {
     for (const [path, impl] of Object.entries(opts.impls)) {
-      seq.mount('cap', path, impl);
+      seq.mount('tool', path, impl);
     }
   }
 

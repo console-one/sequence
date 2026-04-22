@@ -18,8 +18,8 @@ describe('derived with glob argPaths (Commit 6)', () => {
     const seq = new Sequence(() => 1000);
     const events: Array<{ path: string; value: unknown }> = [];
 
-    // Register a capability that records each fire.
-    seq.mount('cap', 'record', (triggerPath: string, triggerValue: unknown) => {
+    // Register a tool that records each fire.
+    seq.mount('tool', 'record', (triggerPath: string, triggerValue: unknown) => {
       events.push({ path: triggerPath, value: triggerValue });
       return `${triggerPath}=${triggerValue}`;
     });
@@ -50,7 +50,7 @@ describe('derived with glob argPaths (Commit 6)', () => {
   test('derived fn output is stored at the target path', () => {
     const seq = new Sequence(() => 2000);
 
-    seq.mount('cap', 'latestLine', (triggerPath: string, triggerValue: unknown) => {
+    seq.mount('tool', 'latestLine', (triggerPath: string, triggerValue: unknown) => {
       return `${triggerPath} = ${JSON.stringify(triggerValue)}`;
     });
     seq.mount('schema', 'emission.latest', FT.derived('latestLine', 'log.*'));
@@ -66,7 +66,7 @@ describe('derived with glob argPaths (Commit 6)', () => {
     const seq = new Sequence(() => 3000);
 
     // fn takes (triggerPath, triggerValue, contextVal)
-    seq.mount('cap', 'combined', (triggerPath: string, triggerValue: unknown, ctx: unknown) => {
+    seq.mount('tool', 'combined', (triggerPath: string, triggerValue: unknown, ctx: unknown) => {
       return `[${ctx}] ${triggerPath} = ${triggerValue}`;
     });
 
@@ -82,10 +82,10 @@ describe('derived with glob argPaths (Commit 6)', () => {
     const seq = new Sequence(() => 4000);
     const emitted: string[] = [];
 
-    // The "sink" is a capability that records the emission.
+    // The "sink" is a tool that records the emission.
     // In server.ts this would send over a WebSocket; the kernel doesn't
     // know about transport — it just binds the emission at the target path.
-    seq.mount('cap', 'formatEmission', (triggerPath: string, triggerValue: unknown) => {
+    seq.mount('tool', 'formatEmission', (triggerPath: string, triggerValue: unknown) => {
       const line = `${triggerPath} = ${JSON.stringify(triggerValue)}`;
       emitted.push(line);
       return line;

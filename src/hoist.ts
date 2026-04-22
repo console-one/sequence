@@ -27,7 +27,7 @@ export type Readable = {
 export type HoistOptions = {
   depth?: number;
   expanded?: Set<string>;
-  capabilities?: Set<string>;
+  tools?: Set<string>;
   /** Reader identity bindings for visibility enforcement. */
   reader?: Map<string, unknown>;
   /** Sort children of a path by a child field value. */
@@ -61,7 +61,7 @@ function nextToken(): string {
 export function hoist(tree: Readable, opts: HoistOptions = {}): HoistResult {
   const depth = opts.depth ?? 2;
   const expanded = opts.expanded ?? new Set<string>();
-  const capabilities = opts.capabilities ?? new Set<string>();
+  const tools = opts.tools ?? new Set<string>();
   const reader = opts.reader;
   const expandTokens: string[] = [];
   const lines: string[] = [];
@@ -71,11 +71,11 @@ export function hoist(tree: Readable, opts: HoistOptions = {}): HoistResult {
   const topKeys = tree.keys().filter(k => !k.startsWith('_'));
 
   for (const key of topKeys) {
-    emitPath(tree, key, key, 0, depth, expanded, capabilities, reader, opts, expandTokens, lines);
+    emitPath(tree, key, key, 0, depth, expanded, tools, reader, opts, expandTokens, lines);
   }
 
   // Emit gaps as comments
-  const gapLines = emitGaps(tree, topKeys, capabilities);
+  const gapLines = emitGaps(tree, topKeys, tools);
   if (gapLines.length > 0) {
     lines.push('');
     lines.push('-- Gaps (obligations without values):');
@@ -180,7 +180,7 @@ export function hoistForReader(tree: Readable, readerName: string): HoistResult 
 function emitPath(
   tree: Readable, path: string, displayPath: string,
   currentDepth: number, maxDepth: number,
-  expanded: Set<string>, capabilities: Set<string>,
+  expanded: Set<string>, tools: Set<string>,
   reader: Map<string, unknown> | undefined,
   opts: HoistOptions,
   expandTokens: string[], lines: string[],
@@ -251,7 +251,7 @@ function emitPath(
   for (const childKey of children) {
     const childPath = `${path}.${childKey}`;
     const childDisplay = `${displayPath}.${childKey}`;
-    emitPath(tree, childPath, childDisplay, currentDepth + 1, maxDepth, expanded, capabilities, reader, opts, expandTokens, lines);
+    emitPath(tree, childPath, childDisplay, currentDepth + 1, maxDepth, expanded, tools, reader, opts, expandTokens, lines);
   }
 }
 
@@ -391,7 +391,7 @@ function renderTypeFt(type: Type): string {
 // GAP EMISSION
 // ═══════════════════════════════════════════════════════════════════════
 
-function emitGaps(tree: Readable, rootKeys: string[], capabilities: Set<string>): string[] {
+function emitGaps(tree: Readable, rootKeys: string[], tools: Set<string>): string[] {
   const gaps: string[] = [];
 
   function walk(prefix: string) {
@@ -418,7 +418,7 @@ function emitGaps(tree: Readable, rootKeys: string[], capabilities: Set<string>)
         if (derived) {
           const [fnId, ...argPaths] = derived.args as string[];
           const missing = argPaths.filter(p => tree.get(p) === undefined);
-          if (!capabilities.has(fnId) || missing.length > 0) {
+          if (!tools.has(fnId) || missing.length > 0) {
             gaps.push(`-- ${path} -> ${fnId}(${argPaths.join(', ')}) [pending]`);
           }
         }

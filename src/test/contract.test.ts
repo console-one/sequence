@@ -1,6 +1,6 @@
 /**
- * contract.test.ts — Capability contracts with heartbeat-gated availability,
- * nested capabilities, derived obligations, and term stacking.
+ * contract.test.ts — Tool contracts with heartbeat-gated availability,
+ * nested tools, derived obligations, and term stacking.
  *
  * Uses unprefixed paths (default to state partition) to avoid cross-partition
  * issues — this test is about contract semantics, not partition boundaries.
@@ -115,8 +115,8 @@ describe('contract as obligation template', () => {
     // No impl → gap exists
     expect(seq.gaps().some(g => g.path === 'services.approve')).toBe(true);
 
-    // Install impl → capability-availability gap filled
-    seq.mount('cap', 'services.approve', () => ({ approved: true }));
+    // Install impl → tool-availability gap filled
+    seq.mount('tool', 'services.approve', () => ({ approved: true }));
     expect(seq.gaps().some(g => g.path === 'services.approve')).toBe(false);
   });
 
@@ -137,19 +137,19 @@ describe('contract as obligation template', () => {
     expect(gaps.length).toBe(3);
 
     // Fill one
-    seq.mount('cap', 'services.create', () => ({ id: '123' }));
+    seq.mount('tool', 'services.create', () => ({ id: '123' }));
     const remaining = seq.gaps().filter(g => g.path.startsWith('services.'));
     expect(remaining.length).toBe(2);
 
     // Fill all
-    seq.mount('cap', 'services.read', () => ({ content: 'text' }));
-    seq.mount('cap', 'services.delete', () => ({ deleted: 'yes' }));
+    seq.mount('tool', 'services.read', () => ({ content: 'text' }));
+    seq.mount('tool', 'services.delete', () => ({ deleted: 'yes' }));
     expect(seq.gaps().filter(g => g.path.startsWith('services.')).length).toBe(0);
   });
 
-  // ─── REGRESSION LOCK: capability gap invariant ───────────────
+  // ─── REGRESSION LOCK: tool gap invariant ───────────────
 
-  test('INVARIANT: fn schema at P + installed impl for P => P is NOT a capability gap', () => {
+  test('INVARIANT: fn schema at P + installed impl for P => P is NOT a tool gap', () => {
     const seq = new Sequence();
 
     // Mount fn schema
@@ -170,7 +170,7 @@ describe('contract as obligation template', () => {
     expect(gapBefore!.type.kind).toBe('fn');
 
     // Install impl
-    seq.mount('cap', 'tools.translate', (input: any) => ({
+    seq.mount('tool', 'tools.translate', (input: any) => ({
       translated: `[${input.lang}] ${input.text}`,
     }));
 
@@ -199,24 +199,24 @@ describe('term stacking', () => {
 
     seq.mount([
       { op: 'bind', path: 'svc.status', value: 'online' },
-      { op: 'bind', path: 'svc.cap.a', value: 'ready' },
-      { op: 'bind', path: 'svc.cap.b', value: 'ready' },
-      { op: 'bind', path: 'svc.cap.c', value: 'ready' },
+      { op: 'bind', path: 'svc.tool.a', value: 'ready' },
+      { op: 'bind', path: 'svc.tool.b', value: 'ready' },
+      { op: 'bind', path: 'svc.tool.c', value: 'ready' },
     ], {
       while: [heartbeatFresh('svc.heartbeat', 3000)],
     });
 
-    expect(seq.get('svc.cap.a')).toBe('ready');
-    expect(seq.get('svc.cap.b')).toBe('ready');
-    expect(seq.get('svc.cap.c')).toBe('ready');
+    expect(seq.get('svc.tool.a')).toBe('ready');
+    expect(seq.get('svc.tool.b')).toBe('ready');
+    expect(seq.get('svc.tool.c')).toBe('ready');
 
     // Heartbeat drops
     now = 1004000;
     seq.mount('bind', '_tick', now);
 
-    expect(seq.get('svc.cap.a')).toBeUndefined();
-    expect(seq.get('svc.cap.b')).toBeUndefined();
-    expect(seq.get('svc.cap.c')).toBeUndefined();
+    expect(seq.get('svc.tool.a')).toBeUndefined();
+    expect(seq.get('svc.tool.b')).toBeUndefined();
+    expect(seq.get('svc.tool.c')).toBeUndefined();
     expect(seq.get('svc.status')).toBeUndefined();
   });
 
@@ -249,9 +249,9 @@ describe('term stacking', () => {
 // CAPABILITY IO — fn schema + impl + invocation
 // ═══════════════════════════════════════════════════════════════════════
 
-describe('capability IO', () => {
+describe('tool IO', () => {
 
-  test('fn schema + cap → no gap. Invocation mounts output.', () => {
+  test('fn schema + tool → no gap. Invocation mounts output.', () => {
     const seq = new Sequence();
 
     seq.mount('schema', 'tools.double', createType('fn', [
@@ -263,7 +263,7 @@ describe('capability IO', () => {
     expect(seq.gaps().some(g => g.path === 'tools.double')).toBe(true);
 
     // Install impl
-    seq.mount('cap', 'tools.double', (input: any) => ({ result: input.x * 2 }));
+    seq.mount('tool', 'tools.double', (input: any) => ({ result: input.x * 2 }));
 
     // No gap after impl
     expect(seq.gaps().some(g => g.path === 'tools.double')).toBe(false);
@@ -273,7 +273,7 @@ describe('capability IO', () => {
     expect(seq.get('tools.double.result')).toEqual({ result: 42 });
   });
 
-  test('full: heartbeat-gated contract with capability, invoke, then drop', () => {
+  test('full: heartbeat-gated contract with tool, invoke, then drop', () => {
     let now = 1000000;
     const seq = new Sequence(() => now);
 
@@ -298,7 +298,7 @@ describe('capability IO', () => {
     expect(seq.gaps().some(g => g.path === 'mathsvc.add')).toBe(true);
 
     // Install impl
-    seq.mount('cap', 'mathsvc.add', (input: any) => ({ sum: input.a + input.b }));
+    seq.mount('tool', 'mathsvc.add', (input: any) => ({ sum: input.a + input.b }));
     expect(seq.gaps().some(g => g.path === 'mathsvc.add')).toBe(false);
 
     // Invoke
@@ -312,6 +312,6 @@ describe('capability IO', () => {
     // Schema was in the gated block — invalidated
     // Note: the result may persist as a value even after schema invalidation,
     // because invalidation removes bind entries from the block, not all descendants.
-    // The capability and schema are gone though.
+    // The tool and schema are gone though.
   });
 });

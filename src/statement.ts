@@ -23,7 +23,7 @@ export type StatementOp =
   | 'delete'       // remove a value at a path
   | 'schema'       // set type constraint at a path
   | 'narrow'       // compose constraints into the constraint set at a path (Artifact 6)
-  | 'cap'          // register a capability
+  | 'tool'          // register a tool
   | 'policy'       // set transition/interpolation policy
   | 'invalidate'   // invalidate a prior statement (by targetSeq)
   ;

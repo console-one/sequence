@@ -1,5 +1,5 @@
 /**
- * routing.test.ts — Capability routing via type composition.
+ * routing.test.ts — Tool routing via type composition.
  *
  * Proves: model selection, quota enforcement, backward feasibility,
  * and live constraint changes all fall out of compose/selectFirstBranch/
@@ -19,10 +19,10 @@ import { compose, selectFirstBranch, backwardInfer } from '../compose';
 import { FT } from '../builder';
 
 // ═══════════════════════════════════════════════════════════════════════
-// HELPERS — build capability types and routing unions from live state
+// HELPERS — build tool types and routing unions from live state
 // ═══════════════════════════════════════════════════════════════════════
 
-/** Build a capability fn type for a model with quota constraint. */
+/** Build a tool fn type for a model with quota constraint. */
 function modelCapability(
   modelName: string,
   tokensNeeded: number,
@@ -163,11 +163,11 @@ function feasibility(
     const limit = (seq.get(`state.limits.${m}.tokens_per_day`) as number) ?? 0;
     const remaining = Math.max(0, limit - used);
 
-    // Type-level check: does a capability for this model compose with
+    // Type-level check: does a tool for this model compose with
     // an input requiring remaining >= totalNeeded?
-    const cap = modelCapability(m, totalNeeded);
+    const tool = modelCapability(m, totalNeeded);
     const input = routingInput('feasibility-probe', { [m]: remaining });
-    const composed = compose(cap, input);
+    const composed = compose(tool, input);
     const feasible = composed.kind !== 'never';
 
     return { model: m, remaining, needed: totalNeeded, feasible };
@@ -178,7 +178,7 @@ function feasibility(
 // TESTS
 // ═══════════════════════════════════════════════════════════════════════
 
-describe('compose-based capability routing', () => {
+describe('compose-based tool routing', () => {
 
   let seq: Sequence;
   const MODELS = ['gpt4', 'gpt35'];
@@ -199,16 +199,16 @@ describe('compose-based capability routing', () => {
     seq.mount('bind', `state.usage.gpt4.${USER}.${DAY}.tokens`, 0);
     seq.mount('bind', `state.usage.gpt35.${USER}.${DAY}.tokens`, 0);
 
-    // Mount capability schemas + registrations
-    seq.mount('schema', 'cap.gpt4', modelCapability('gpt4', 1, {
+    // Mount tool schemas + registrations
+    seq.mount('schema', 'tool.gpt4', modelCapability('gpt4', 1, {
       timeMu: 7, reliabilityAlpha: 95,
     }));
-    seq.mount('cap', 'cap.gpt4', true);
+    seq.mount('tool', 'tool.gpt4', true);
 
-    seq.mount('schema', 'cap.gpt35', modelCapability('gpt35', 1, {
+    seq.mount('schema', 'tool.gpt35', modelCapability('gpt35', 1, {
       timeMu: 6, reliabilityAlpha: 90,
     }));
-    seq.mount('cap', 'cap.gpt35', true);
+    seq.mount('tool', 'tool.gpt35', true);
   });
 
   // ─── DETERMINISTIC BRANCH SELECTION ──────────────────────────
@@ -425,7 +425,7 @@ describe('compose-based capability routing', () => {
 
   describe('time-aware routing via probabilistic compose', () => {
 
-    /** Build a capability fn with quota + time distribution + deadline + confidence. */
+    /** Build a tool fn with quota + time distribution + deadline + confidence. */
     function timedModelCapability(
       modelName: string,
       tokensNeeded: number,

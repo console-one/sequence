@@ -51,10 +51,10 @@ describe('concreteness distribution — end-to-end (Commit 7)', () => {
     //
     // The reader is a derived rule at _readers.worker.emission. Its
     // argPath is the glob tasks.*. Any change under tasks.* fires the
-    // cascade, which computes the emission via the formatEmission cap
+    // cascade, which computes the emission via the formatEmission tool
     // and binds it at the target path. This is the same mechanism as
     // any other cascade — no new primitive.
-    seq.mount('cap', 'formatEmission', (triggerPath: string, triggerValue: unknown) => {
+    seq.mount('tool', 'formatEmission', (triggerPath: string, triggerValue: unknown) => {
       const line = `${triggerPath} = ${JSON.stringify(triggerValue)}`;
       readerEmissions.push(line);
       return line;
@@ -62,7 +62,7 @@ describe('concreteness distribution — end-to-end (Commit 7)', () => {
     seq.mount('schema', '_readers.worker.emission',
       FT.derived('formatEmission', 'tasks.*'));
 
-    // ─── 3. Install a capability schema + impl for task completion ─
+    // ─── 3. Install a tool schema + impl for task completion ─
     //
     // The schema at tasks.deploy.result carries a distribution('time')
     // constraint so concretenessDistribution knows how the result
@@ -159,12 +159,12 @@ describe('concreteness distribution — end-to-end (Commit 7)', () => {
     const urgentEmissions: string[] = [];
     const normalEmissions: string[] = [];
 
-    seq.mount('cap', 'formatUrgent', (path: string, value: unknown) => {
+    seq.mount('tool', 'formatUrgent', (path: string, value: unknown) => {
       const line = `urgent: ${path}=${value}`;
       urgentEmissions.push(line);
       return line;
     });
-    seq.mount('cap', 'formatNormal', (path: string, value: unknown) => {
+    seq.mount('tool', 'formatNormal', (path: string, value: unknown) => {
       const line = `normal: ${path}=${value}`;
       normalEmissions.push(line);
       return line;

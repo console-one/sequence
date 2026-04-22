@@ -77,7 +77,7 @@ describe('conjunction priority via gaps()', () => {
 
   test('derived with multiple inputs: both needed', () => {
     const seq = new Sequence();
-    seq.append('cap', 'combine', (a: number, b: number) => a + b);
+    seq.append('tool', 'combine', (a: number, b: number) => a + b);
     seq.append('schema', 'sum', FT.derived('combine', 'x', 'y'));
 
     // Neither input exists

@@ -1021,7 +1021,7 @@ function backwardInferIdentity(
  *
  * Use this to compare two types: "which is narrower?" For actual probability
  * of a path resolving, use Sequence.concreteness(path, atTime) which
- * accounts for current state, capabilities, and time.
+ * accounts for current state, tools, and time.
  *
  *   1.0  — fully determined (literal)
  *   0.0  — impossible (never)
@@ -1197,7 +1197,7 @@ export type DistParams = Record<string, number>;
  * CDF: P(X ≤ t) for a distribution family.
  *
  * This is what makes distribution constraints actually computable.
- * Used by feasibility() to answer: P(capability completes by deadline).
+ * Used by feasibility() to answer: P(tool completes by deadline).
  */
 export function cdf(family: string, t: number, params: DistParams): number {
   if (t <= 0) return 0;

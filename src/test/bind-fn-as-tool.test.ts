@@ -1,21 +1,21 @@
 /**
- * bind-fn-as-cap.test.ts — `mount('bind', path, fn)` is equivalent to
- * `mount('cap', path, fn)` when the schema at `path` is fn-typed.
+ * bind-fn-as-tool.test.ts — `mount('bind', path, fn)` is equivalent to
+ * `mount('tool', path, fn)` when the schema at `path` is fn-typed.
  *
- * Phase A of the `cap`-op collapse. The user's position: a capability
+ * Phase A of the `tool`-op collapse. The user's position: a tool
  * is a mounted coherent function, not a distinct kind of mount. These
  * tests prove that binding a function value to an fn-typed schema
- * produces exactly the same projection state as the legacy cap path —
- * same `implRegistry` entry, same `capabilities` marker, same `_caps`
+ * produces exactly the same projection state as the legacy tool path —
+ * same `implRegistry` entry, same `tools` marker, same `_tools`
  * list. Subsequent phases will migrate callers and eventually delete
- * the `cap` op; this phase just makes `bind` sufficient.
+ * the `tool` op; this phase just makes `bind` sufficient.
  */
 
 import { Sequence } from '../sequence';
 import { createType, param, returns } from '../type';
 import { FT } from '../builder';
 
-describe('bind with fn value registers impl (cap-op collapse Phase A)', () => {
+describe('bind with fn value registers impl (tool-op collapse Phase A)', () => {
   function mkFnSchema() {
     return createType('fn', [
       param(createType('object', [])),
@@ -23,21 +23,21 @@ describe('bind with fn value registers impl (cap-op collapse Phase A)', () => {
     ]);
   }
 
-  test('bind(path, fn) on an fn-typed schema populates capabilities and implRegistry', () => {
+  test('bind(path, fn) on an fn-typed schema populates tools and implRegistry', () => {
     const seq = new Sequence();
     seq.mount('schema', 'fs.read', mkFnSchema());
     const impl = (_input: unknown) => ({ content: 'hello' });
 
     seq.mount('bind', 'fs.read', impl);
 
-    // The capability is visible in the `_caps` index and in
-    // `projection.capabilities`, exactly like a cap mount would have.
-    expect(seq.projection.capabilities.has('fs.read')).toBe(true);
-    const caps = seq.get('_caps') as string[];
-    expect(caps).toContain('fs.read');
+    // The tool is visible in the `_tools` index and in
+    // `projection.tools`, exactly like a tool mount would have.
+    expect(seq.projection.tools.has('fs.read')).toBe(true);
+    const tools = seq.get('_tools') as string[];
+    expect(tools).toContain('fs.read');
   });
 
-  test('bind(path, fn) and cap(path, fn) produce identical projection state', () => {
+  test('bind(path, fn) and tool(path, fn) produce identical projection state', () => {
     const impl = (_input: unknown) => ({ ok: true });
 
     const a = new Sequence();
@@ -46,14 +46,14 @@ describe('bind with fn value registers impl (cap-op collapse Phase A)', () => {
 
     const b = new Sequence();
     b.mount('schema', 'echo.once', mkFnSchema());
-    b.mount('cap', 'echo.once', impl);
+    b.mount('tool', 'echo.once', impl);
 
-    // Same capability marker
-    expect(a.projection.capabilities.has('echo.once')).toBe(true);
-    expect(b.projection.capabilities.has('echo.once')).toBe(true);
+    // Same tool marker
+    expect(a.projection.tools.has('echo.once')).toBe(true);
+    expect(b.projection.tools.has('echo.once')).toBe(true);
 
-    // Same `_caps` list
-    expect(a.get('_caps')).toEqual(b.get('_caps'));
+    // Same `_tools` list
+    expect(a.get('_tools')).toEqual(b.get('_tools'));
 
     // Same invocation behavior: binding a NON-function value to the
     // fn-typed path invokes the registered impl with that value as
@@ -84,19 +84,19 @@ describe('bind with fn value registers impl (cap-op collapse Phase A)', () => {
     seq.mount('schema', 'greeting', FT.string());
     seq.mount('bind', 'greeting', 'hello');
     expect(seq.get('greeting')).toBe('hello');
-    expect(seq.projection.capabilities.has('greeting')).toBe(false);
+    expect(seq.projection.tools.has('greeting')).toBe(false);
   });
 
   test('bind(path, fn) on a non-fn schema falls through to the normal bind path', () => {
     // Edge case: binding a function to a non-fn-typed path. The
     // type check at the schema will reject or pass-through depending
     // on the schema's shape. What it MUST NOT do is register the
-    // function as a cap — capabilities require an fn-typed schema.
+    // function as a tool — tools require an fn-typed schema.
     const seq = new Sequence();
     seq.mount('schema', 'weird', FT.string());
     seq.mount('bind', 'weird', (() => 'callable') as any);
-    // No cap registration happened — the schema isn't fn-typed.
-    expect(seq.projection.capabilities.has('weird')).toBe(false);
+    // No tool registration happened — the schema isn't fn-typed.
+    expect(seq.projection.tools.has('weird')).toBe(false);
   });
 
   test('re-binding a new fn to the same path replaces the impl', () => {
@@ -113,22 +113,22 @@ describe('bind with fn value registers impl (cap-op collapse Phase A)', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════
-// Phase B — schema mount of fn-kind IS the capability declaration
+// Phase B — schema mount of fn-kind IS the tool declaration
 // ═══════════════════════════════════════════════════════════════════════
 //
-// `capabilities` holds the declared-set of capabilities — type state,
+// `tools` holds the declared-set of tools — type state,
 // persistent, serialized, queried by cross-process coordination
-// (PendingInvocation, planning, getCapabilities). `implRegistry` is
+// (PendingInvocation, planning, getTools). `implRegistry` is
 // the process-local slice of those declarations that have cached
 // local impls.
 //
 // Declaration and local-impl are different concerns. Before Phase B
-// the only way to populate `capabilities` was via the `cap` mount op.
+// the only way to populate `tools` was via the `tool` mount op.
 // That confused declaration with registration. Now a schema mount of
-// fn-kind populates `capabilities` automatically — the schema IS the
+// fn-kind populates `tools` automatically — the schema IS the
 // declaration. A subsequent bind provides the local impl.
 
-describe('schema mount of fn-kind populates capabilities (Phase B)', () => {
+describe('schema mount of fn-kind populates tools (Phase B)', () => {
   function mkFnSchema() {
     return createType('fn', [
       param(createType('object', [])),
@@ -136,26 +136,26 @@ describe('schema mount of fn-kind populates capabilities (Phase B)', () => {
     ]);
   }
 
-  test('schema mount with fn kind marks the path as a declared capability', () => {
+  test('schema mount with fn kind marks the path as a declared tool', () => {
     const seq = new Sequence();
     seq.mount('schema', 'fs.read', mkFnSchema());
-    expect(seq.projection.capabilities.has('fs.read')).toBe(true);
-    expect(seq.get('_caps')).toContain('fs.read');
+    expect(seq.projection.tools.has('fs.read')).toBe(true);
+    expect(seq.get('_tools')).toContain('fs.read');
   });
 
-  test('schema mount with non-fn kind does NOT mark as capability', () => {
+  test('schema mount with non-fn kind does NOT mark as tool', () => {
     const seq = new Sequence();
     seq.mount('schema', 'org.name', FT.string());
-    expect(seq.projection.capabilities.has('org.name')).toBe(false);
-    const caps = (seq.get('_caps') as string[] | undefined) ?? [];
-    expect(caps).not.toContain('org.name');
+    expect(seq.projection.tools.has('org.name')).toBe(false);
+    const tools = (seq.get('_tools') as string[] | undefined) ?? [];
+    expect(tools).not.toContain('org.name');
   });
 
-  test('declaration without local impl — the capability is declared but implRegistry is empty', () => {
+  test('declaration without local impl — the tool is declared but implRegistry is empty', () => {
     const seq = new Sequence();
     seq.mount('schema', 'external.api', mkFnSchema());
     // Declared
-    expect(seq.projection.capabilities.has('external.api')).toBe(true);
+    expect(seq.projection.tools.has('external.api')).toBe(true);
     // But this process can't run it locally — no impl.
     expect((seq as any).implRegistry.has('external.api')).toBe(false);
   });
@@ -163,37 +163,37 @@ describe('schema mount of fn-kind populates capabilities (Phase B)', () => {
   test('declaration then bind fn — the local impl joins the existing declaration', () => {
     const seq = new Sequence();
     seq.mount('schema', 'math.square', mkFnSchema());
-    expect(seq.projection.capabilities.has('math.square')).toBe(true);
+    expect(seq.projection.tools.has('math.square')).toBe(true);
     expect((seq as any).implRegistry.has('math.square')).toBe(false);
 
     seq.mount('bind', 'math.square', (input: any) => ({ value: input.value * input.value }));
-    expect(seq.projection.capabilities.has('math.square')).toBe(true);
+    expect(seq.projection.tools.has('math.square')).toBe(true);
     expect((seq as any).implRegistry.has('math.square')).toBe(true);
 
     seq.mount('bind', 'math.square', { value: 7 });
     expect(seq.get('math.square.result')).toEqual({ value: 49 });
   });
 
-  test('schema re-mount (idempotent) does not duplicate the _caps entry', () => {
+  test('schema re-mount (idempotent) does not duplicate the _tools entry', () => {
     const seq = new Sequence();
     seq.mount('schema', 'do.it', mkFnSchema());
     seq.mount('schema', 'do.it', mkFnSchema());
-    const caps = seq.get('_caps') as string[];
-    const count = caps.filter(c => c === 'do.it').length;
+    const tools = seq.get('_tools') as string[];
+    const count = tools.filter(c => c === 'do.it').length;
     expect(count).toBe(1);
   });
 
-  test('legacy `cap path true` and new `schema path fnType` produce the same declared-capability state', () => {
+  test('legacy `tool path true` and new `schema path fnType` produce the same declared-tool state', () => {
     const a = new Sequence();
     a.mount('schema', 'x', mkFnSchema());
-    a.mount('cap', 'x', true);
+    a.mount('tool', 'x', true);
 
     const b = new Sequence();
     b.mount('schema', 'x', mkFnSchema());
-    // No cap mount — the schema alone declares the capability.
+    // No tool mount — the schema alone declares the tool.
 
-    expect(a.projection.capabilities.has('x')).toBe(true);
-    expect(b.projection.capabilities.has('x')).toBe(true);
-    expect(a.get('_caps')).toEqual(b.get('_caps'));
+    expect(a.projection.tools.has('x')).toBe(true);
+    expect(b.projection.tools.has('x')).toBe(true);
+    expect(a.get('_tools')).toEqual(b.get('_tools'));
   });
 });
