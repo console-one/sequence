@@ -532,6 +532,28 @@ export class Sequence {
    *  index-class bodies instead. */
   private blockObservers: Array<(result: MountResult) => void> = [];
 
+  /** Auto-promotion threshold. When a positive integer, every
+   *  outermost cascade fixpoint runs `promoteRefinements({minEvidence})`
+   *  so observed regularities become declared constraints without
+   *  external prompting. Infinity = disabled. Configure via
+   *  `enableLearning(n)`. */
+  private learningThreshold: number = Infinity;
+
+  /** Turn on observation-driven constraint promotion. After every
+   *  outermost mount cascade, the substrate scans the block log for
+   *  paths with at least `minEvidence` distinct bind values and
+   *  mounts the lattice-join as an owned claim. The same algorithm
+   *  as `promoteRefinements`, fired automatically. */
+  enableLearning(minEvidence: number = 5): void {
+    this.learningThreshold = minEvidence;
+  }
+
+  /** Disable auto-promotion (the default). Manual `promoteRefinements`
+   *  calls still work. */
+  disableLearning(): void {
+    this.learningThreshold = Infinity;
+  }
+
   /** Register a callback that fires after every outer mount
    *  completes. Returns an unregister function. */
   onBlockApplied(cb: (result: MountResult) => void): () => void {
@@ -1314,6 +1336,15 @@ export class Sequence {
       nextWake: this.nextWake(),
       toolCompletion,
     };
+    // Auto-promote: when learning is enabled, run the observation-
+    // accumulation pass at every outermost cascade fixpoint. The
+    // promotion writes new owned claims (owner='derived:learning')
+    // which the substrate treats like any other narrowing — they
+    // join the constraint graph and the next cascade meets against
+    // them. LEARNING_AS_COMPRESSION's terminal action.
+    if (wasOutermost && this.learningThreshold !== Infinity) {
+      this.promoteRefinements({ minEvidence: this.learningThreshold });
+    }
     // Notify observers — but only on the outermost mount so a
     // single cascade produces one observer callback per external
     // trigger, not one per nested body mount. Nested mounts still

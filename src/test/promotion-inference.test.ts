@@ -38,4 +38,30 @@ describe('promoteRefinements — observation-driven constraint promotion', () =>
     const affected = seq.releaseOwner('derived:learning');
     expect(affected).toContain('status');
   });
+
+  test('enableLearning fires promotion at every cascade fixpoint', () => {
+    const seq = new Sequence();
+    seq.enableLearning(2);
+    seq.mount('schema', 'status', createType('string', []));
+    seq.mount('bind', 'status', 'a');
+    // Below threshold (1 distinct value): no derived claim yet.
+    expect(seq.releaseOwner('derived:learning')).not.toContain('status');
+    // Crossing the threshold: the next mount's cascade auto-promotes.
+    seq.mount('bind', 'status', 'b');
+    // The derived:learning owner now claims at this path.
+    expect(seq.releaseOwner('derived:learning')).toContain('status');
+  });
+
+  test('disableLearning stops auto-promotion', () => {
+    const seq = new Sequence();
+    seq.enableLearning(2);
+    seq.mount('schema', 'fresh', createType('string', []));
+    seq.mount('bind', 'fresh', 'x');
+    seq.mount('bind', 'fresh', 'y');  // promotes
+    seq.releaseOwner('derived:learning');
+    seq.disableLearning();
+    seq.mount('bind', 'fresh', 'z');
+    // No re-promotion after disable.
+    expect(seq.releaseOwner('derived:learning')).not.toContain('fresh');
+  });
 });
