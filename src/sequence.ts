@@ -127,17 +127,8 @@ export class PathMap<V> extends Map<string, V> {
  */
 export type ConstraintNode = {
   kind?: import('./type').Kind;
-  /** Schema-declared constraints. Literal constraints in this array
-   *  came from `mount('schema', ..., createType(kind, [literal(v)]))`
-   *  — they are part of the declared type, not bind values. */
   constraints: Constraint[];
   meta?: import('./type').TypeMeta;
-  /** Bind-side value slot. Set by `_writeBind`; not exposed as part
-   *  of the Type returned by `_typeOf`. Distinguishes a bound value
-   *  from a literal-constrained schema during the Artifact 5
-   *  transition. Artifact 6 collapses the two into one constraint
-   *  set; until then, this slot keeps the dual semantics one-store. */
-  boundValue?: { v: unknown };
 };
 
 export type Projection = {
@@ -230,7 +221,7 @@ export type GapInfo = { path: string; type: Type; priority: number; capabilities
  *
  * This is not a lattice value type — it's a computation over the fn-IO
  * chain and ancestor type chain for a path, evaluated on demand. It has
- * no home in proj.values or proj.schemas.
+ * no home in the projection's constraint store.
  */
 export interface ConcretenessDistribution {
   /** P(path realized-and-interpretable by time t), combining all three factors. */
@@ -560,55 +551,51 @@ export class Sequence {
   get realtime(): number { return this.clock(); }
   get head(): number { return this.nextBlockSeq; }
 
-  // ═══ UNIFIED CONSTRAINT STORE (CONSTRAINT_GRAPH.md Artifact 5) ═══════
+  // CONSTRAINT GRAPH (CONSTRAINT_GRAPH.md, HC1+HC6)
   //
-  // These helpers are the single read/write surface over the unified
-  // `proj.nodes` store. During the Artifact 5 transition the legacy
-  // dual stores `proj.values` and `proj.schemas` continue to receive
-  // mirrored writes; once all internal call sites route through these
-  // helpers the duals are deleted.
-  //
-  // Naming convention: helpers are kernel-private (underscore prefix);
-  // external API (`get`, `typeAt`, `mount`) sits on top.
+  // proj.nodes is the sole store. A node is {kind?, constraints[], meta?}.
+  // Bind values appear as `bound` ops; schema-declared literals as `literal`.
+  // Both surface as the path's value; the op distinguishes who can replace
+  // them (bind: replaces own `bound`; schema: replaces all `literal`s).
 
-  /** Return the bound value at `path`, or undefined if no bind
-   *  occurred. The unified-store equivalent of the legacy
-   *  `proj.values.get(path)`. Does NOT walk children — for structural
-   *  collection use `Sequence.get(path)`. */
   private _leafValueAt(path: string): unknown {
-    return this.proj.nodes.get(path)?.boundValue?.v;
+    const cs = this.proj.nodes.get(path)?.constraints;
+    if (!cs) return undefined;
+    for (let i = cs.length - 1; i >= 0; i--) if (cs[i].op === 'bound') return cs[i].args[0];
+    for (let i = cs.length - 1; i >= 0; i--) if (cs[i].op === 'literal') return cs[i].args[0];
+    return undefined;
   }
 
-  /** True iff a bind has occurred at `path`. The unified-store
-   *  equivalent of the legacy `proj.values.has(path)`. */
   private _hasLeafValue(path: string): boolean {
-    return !!this.proj.nodes.get(path)?.boundValue;
+    const cs = this.proj.nodes.get(path)?.constraints;
+    return !!cs && cs.some(c => c.op === 'bound' || c.op === 'literal');
   }
 
-  /** Reconstruct a Type from the node at `path`. Returns undefined if
-   *  no schema was ever declared there (only binds happened, with no
-   *  preceding kind declaration).
-   *
-   *  The bind value (boundValue slot) is NOT included in the returned
-   *  Type. The full HC1 collapse — typeAt returning bind-as-literal —
-   *  is held back: it requires migrating compose/check/applyTransition/
-   *  compaction/cascade-dispatch all of which currently assume typeAt
-   *  is the declared schema. Done as a separate session. */
+  /** Raw constraints at this exact path. Internal — `typeAt` is the
+   *  public ancestor-walking HC1 view that maps `bound→literal`. */
   private _typeOf(path: string): Type | undefined {
     const node = this.proj.nodes.get(path);
-    if (!node) return undefined;
-    if (node.kind === undefined) return undefined;
+    if (!node || node.kind === undefined) return undefined;
     return { kind: node.kind, constraints: node.constraints, meta: node.meta };
   }
 
-  /** Iterate every (path, value) pair where the path has a bind value. */
+  /** Schema-declared Type — `bound` constraints filtered out. Walks
+   *  ancestors. Used to validate a NEW bind against the declared type. */
+  private _declaredTypeOf(path: string): Type | undefined {
+    const t = this._typeAtRaw(path);
+    if (!t) return undefined;
+    const declared = t.constraints.filter(c => c.op !== 'bound');
+    if (declared.length === t.constraints.length) return t;
+    return { kind: t.kind, constraints: declared, meta: t.meta };
+  }
+
   private *_iterateLeafValues(): Generator<[string, unknown]> {
-    for (const [path, node] of this.proj.nodes) {
-      if (node.boundValue) yield [path, node.boundValue.v];
+    for (const [path] of this.proj.nodes) {
+      const v = this._leafValueAt(path);
+      if (v !== undefined) yield [path, v];
     }
   }
 
-  /** Iterate every (path, type) pair where the path has a declared schema. */
   private *_iterateTypes(): Generator<[string, Type]> {
     for (const [path, node] of this.proj.nodes) {
       if (node.kind === undefined) continue;
@@ -616,56 +603,38 @@ export class Sequence {
     }
   }
 
-  /** Bind a value at `path`. Sets the node's boundValue slot;
-   *  schema-side constraints (kind, properties, refs, behavioral
-   *  predicates) are untouched. Object/array decomposition is handled
-   *  by the bind op handler in applyEntry, which calls this per leaf. */
   private _writeBind(path: string, v: unknown): void {
     const existing = this.proj.nodes.get(path);
-    const next: ConstraintNode = existing
-      ? { ...existing, boundValue: { v } }
-      : { constraints: [], boundValue: { v } };
-    this.proj.nodes.set(path, next);
+    const bound: Constraint = { op: 'bound', args: [v] };
+    if (!existing) { this.proj.nodes.set(path, { constraints: [bound] }); return; }
+    const without = existing.constraints.filter(c => c.op !== 'bound');
+    this.proj.nodes.set(path, { ...existing, constraints: [...without, bound] });
   }
 
-  /** Replace the schema declaration at `path` with `T`. Sets
-   *  kind/constraints/meta from T; leaves the bind value (boundValue
-   *  slot) intact. */
   private _writeSchema(path: string, T: Type): void {
     const existing = this.proj.nodes.get(path);
-    const next: ConstraintNode = {
+    const priorBound = existing?.constraints.find(c => c.op === 'bound');
+    this.proj.nodes.set(path, {
       kind: T.kind,
-      constraints: [...T.constraints],
+      constraints: priorBound ? [...T.constraints, priorBound] : [...T.constraints],
       meta: T.meta,
-      boundValue: existing?.boundValue,
-    };
-    this.proj.nodes.set(path, next);
+    });
   }
 
-  /** Clear the bind value at `path`. Leaves any schema-declared
-   *  constraints intact. If the node becomes empty, removes it. */
   private _deleteLeafValue(path: string): void {
     const node = this.proj.nodes.get(path);
     if (!node) return;
-    if (node.constraints.length === 0 && node.kind === undefined) {
-      this.proj.nodes.delete(path);
-    } else {
-      const { boundValue: _bv, ...rest } = node;
-      this.proj.nodes.set(path, rest);
-    }
+    const without = node.constraints.filter(c => c.op !== 'bound');
+    if (without.length === 0 && node.kind === undefined) this.proj.nodes.delete(path);
+    else this.proj.nodes.set(path, { ...node, constraints: without });
   }
 
-  /** Remove the schema declaration at `path` — kind, meta, and all
-   *  declared constraints. Leaves the bind value (boundValue slot)
-   *  untouched. */
   private _deleteSchemaOnly(path: string): void {
     const node = this.proj.nodes.get(path);
     if (!node) return;
-    if (!node.boundValue) {
-      this.proj.nodes.delete(path);
-    } else {
-      this.proj.nodes.set(path, { constraints: [], boundValue: node.boundValue });
-    }
+    const bound = node.constraints.find(c => c.op === 'bound');
+    if (!bound) this.proj.nodes.delete(path);
+    else this.proj.nodes.set(path, { constraints: [bound] });
   }
 
   /** Total number of value-changing bind operations recorded across
@@ -698,12 +667,11 @@ export class Sequence {
   get projection(): Readonly<Projection> { return this.proj; }
 
   /** Public iterator over (path, Type) pairs for every path with a
-   *  declared schema. Replaces direct `proj.schemas` iteration for
-   *  downstream consumers (admission law collection, render). */
+   *  declared kind. */
   iterateTypes(): Iterable<[string, Type]> { return this._iterateTypes(); }
 
   /** Public iterator over (path, value) pairs for every path with a
-   *  bind value. Replaces direct `proj.values` iteration. */
+   *  bind value. */
   iterateValues(): Iterable<[string, unknown]> { return this._iterateLeafValues(); }
 
   // ═══ MOUNT — the single operation ═════════════════════════════════
@@ -901,16 +869,20 @@ export class Sequence {
       if (entry.op === 'bind') {
         const { value: withDefaults, defaultedKeys } = this.applyDefaults(entry.path, entry.value);
         const val = this.applyTransition(entry.path, withDefaults);
-        const schema = this.typeAt(entry.path);
-        if (schema) {
-          const result = check(schema, val, entry.path);
+        // Validate the NEW value against the type DECLARED for the
+        // path — not the merged view that includes the prior bind's
+        // literal. The prior literal is the state being replaced;
+        // checking against it would reject every state transition.
+        const declared = this._declaredTypeOf(entry.path);
+        if (declared) {
+          const result = check(declared, val, entry.path);
           if (!result.ok) {
             const block: Block = { seq: blockSeq, time, entries, ...blockOpts, status: 'suspended' };
             this.blocks.push(block);
             this.indexBlock(block);
             return { ok: false, blockSeq, gaps: (result as any).gaps, nextWake: this.nextWake() };
           }
-          const provReject = checkProvenance(entry.path, schema);
+          const provReject = checkProvenance(entry.path, declared);
           if (provReject) return provReject;
         }
         resolved.push({ ...entry, value: val });
@@ -1849,7 +1821,21 @@ export class Sequence {
     return undefined;
   }
 
+  /** Public typeAt: HC1 merged view — bind-derived `bound` constraints
+   *  surface as `literal` constraints in the returned Type so external
+   *  compose/check logic treats them uniformly. */
   typeAt(path: string, visited?: Set<string>): Type | undefined {
+    const raw = this._typeAtRaw(path, visited);
+    if (!raw) return undefined;
+    if (!raw.constraints.some(c => c.op === 'bound')) return raw;
+    const cs = raw.constraints.map(c => c.op === 'bound' ? { op: 'literal', args: c.args } as Constraint : c);
+    return { kind: raw.kind, constraints: cs, meta: raw.meta };
+  }
+
+  /** Internal typeAt walk that returns constraints raw (bind values
+   *  remain as `bound` ops). The kernel uses this when it needs to
+   *  distinguish declared from bound; external callers use `typeAt`. */
+  private _typeAtRaw(path: string, visited?: Set<string>): Type | undefined {
     visited ??= new Set();
     if (visited.has(path)) return undefined;
     visited.add(path);
@@ -1858,7 +1844,7 @@ export class Sequence {
       // Exact-path schema with a ref — follow it to get the real
       // type. Same contract as get(): the ref dereferences.
       const rc = constraintOf(own, 'ref');
-      if (rc) return this.typeAt(rc.args[0] as string, visited);
+      if (rc) return this._typeAtRaw(rc.args[0] as string, visited);
       return own;
     }
     // Walk ancestors — two parallel resolution paths at each level:
@@ -1902,7 +1888,7 @@ export class Sequence {
       if (ancRef) {
         const target = ancRef.args[0] as string;
         const suffix = parts.slice(i).join('.');
-        return this.typeAt(`${target}.${suffix}`, visited);
+        return this._typeAtRaw(`${target}.${suffix}`, visited);
       }
       // (a') Classic object-property extraction.
       if (parentSchema.kind === 'object') {
@@ -2504,8 +2490,11 @@ export class Sequence {
           }
         }
 
-        // Check type at target path — the type determines how this write gets processed
-        const schema = this.typeAt(entry.path);
+        // Check type at target path — the type determines how this write
+        // gets processed. Use the DECLARED type (no prior bind literal)
+        // so a state transition isn't rejected as a literal mismatch
+        // against the value being replaced.
+        const schema = this._declaredTypeOf(entry.path);
         if (schema) {
           const result = check(schema, entry.value, entry.path);
           if (!result.ok) {
@@ -2689,8 +2678,15 @@ export class Sequence {
         }
         break;
       }
-      case 'schema':
+      case 'schema': {
+        // HC4: cascade fires on any narrowing that changes observable
+        // state. A schema mount that lands a literal (or removes one)
+        // changes get() at this path — bump mutationCount so cascade
+        // dispatch sees it the same way it sees a bind.
+        const priorVal = this._leafValueAt(entry.path);
         this._writeSchema(entry.path, entry.value as Type);
+        const newVal = this._leafValueAt(entry.path);
+        if (!Object.is(priorVal, newVal)) this.mutationCount++;
         if (entry.value) {
           const type = entry.value as Type;
           // Fn-kind schema IS the declaration that a capability exists
@@ -2776,6 +2772,7 @@ export class Sequence {
           }
         }
         break;
+      }
       case 'cap':
         // Projection gets a serializable marker; live functions go to implRegistry
         this.proj.capabilities.set(entry.path, true);
@@ -3542,7 +3539,7 @@ export class Sequence {
         if (Array.isArray(v)) return v.some(el => Object.is(el, target));
         return false;
       }
-      case 'matches_type': {
+      case 'satisfies': {
         const v = resolvePath(c.args[0]);
         if (v === undefined) return false;
         return check(c.args[1] as Type, v, typeof c.args[0] === 'string' ? c.args[0] as string : '').ok;

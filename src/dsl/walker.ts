@@ -407,18 +407,16 @@ export function walk(
         const prefix = stmt.name;
 
         // Constructor params: mount schemas AND build where constraints.
-        // Non-optional params gate mounting via matches_type (full type check,
-        // not just exists — carries refinement predicates, temporal bounds,
-        // probability models through to the guard).
+        // Non-optional params gate mounting via `satisfies` (full type
+        // check, not just exists — carries refinement predicates,
+        // temporal bounds, probability models through to the guard).
         const whereConstraints: import('../type').Constraint[] = [];
         for (const p of stmt.params) {
           const paramType = toType(p.type);
           // Mount param schema so the gap is visible with full type info
           mounts.push(seq.mount('schema', p.name, paramType));
           if (!p.optional) {
-            // Gate on full type satisfaction, not just existence.
-            // matches_type does check(type, value) — carries all constraints.
-            whereConstraints.push({ op: 'matches_type', args: [p.name, paramType] });
+            whereConstraints.push({ op: 'satisfies', args: [p.name, paramType] });
           }
         }
 

@@ -842,7 +842,10 @@ export function oneOf(path: string, ...values: unknown[]): Constraint { return {
 export function contains(path: string, value: unknown): Constraint { return { op: 'contains', args: [path, value] }; }
 
 /** Value at path must satisfy the given type (structural type predicate). */
-export function matchesType(path: string, type: Type): Constraint { return { op: 'matches_type', args: [path, type] }; }
+/** The path's value satisfies the given type. The where-clause
+ *  primitive that gates `mount` on full type-check (kind +
+ *  refinements + structural properties), not just existence. */
+export function satisfies(path: string, type: Type): Constraint { return { op: 'satisfies', args: [path, type] }; }
 
 // ═══════════════════════════════════════════════════════════════════════
 // TYPE CONSTRUCTORS

@@ -9,7 +9,7 @@ import { Sequence } from '../sequence';
 import { hoist } from '../hoist';
 import {
   eq, lt, gt, exists, notExists,
-  or, and, not, regex, between, oneOf, contains, matchesType, countGte,
+  or, and, not, regex, between, oneOf, contains, satisfies, countGte,
 } from '../type';
 
 describe('mount — block-based (atomic)', () => {
@@ -565,20 +565,20 @@ describe('Predicate language', () => {
     expect(r.ok).toBe(false);
   });
 
-  test('matchesType: value satisfies type constraint', () => {
+  test('satisfies: value satisfies type constraint', () => {
     const seq = new Sequence();
     seq.append('bind', 'config', { name: 'prod', port: 8080 });
     const r = seq.append('bind', 'valid_config', true, {
-      where: [matchesType('config', FT.object({ name: FT.string(), port: FT.number() }))],
+      where: [satisfies('config', FT.object({ name: FT.string(), port: FT.number() }))],
     });
     expect(r.ok).toBe(true);
   });
 
-  test('matchesType: value fails type constraint', () => {
+  test('satisfies: value fails type constraint', () => {
     const seq = new Sequence();
     seq.append('bind', 'config', { name: 'prod' }); // missing port
     const r = seq.append('bind', 'valid_config', true, {
-      where: [matchesType('config', FT.object({ name: FT.string(), port: FT.number() }))],
+      where: [satisfies('config', FT.object({ name: FT.string(), port: FT.number() }))],
     });
     expect(r.ok).toBe(false);
   });

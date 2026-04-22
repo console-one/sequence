@@ -8,7 +8,7 @@ export {
   constraintOf, constraintsOf, literalValue, properties,
   isAny, isNever, ANY,
   eq, neq, gt, gte, lt, lte, exists, notExists,
-  or, and, not, regex, between, oneOf, contains, matchesType, countGte,
+  or, and, not, regex, between, oneOf, contains, satisfies, countGte,
   bindFrom, indexSpec, law,
   add, mul, call, pm, computable,
   key, responsePolicy, min, max, distribution, preserves, param, returns, endpoint, auth,
