@@ -35,7 +35,7 @@ A **commitment** is a typed write-lease:
 | `typeRef` | The slot's shape — a path to the type-kind value the commitment binds against. May be concrete enough to invoke now; may be narrowable. |
 | `holder` | The author with write-authority. `producedBy(holder)` admission attests every write to the head. |
 | `deadline` | When the commitment must fulfill. After deadline without concrete final write → violation, slot reverts to open lease. |
-| `distribution` | Expected latency prior. Updates Bayesian-conjugately on each fulfillment / violation, surfacing as the holder's reliability. |
+| `distribution` | Expected latency prior. Updates Bayesian-conjugately on each fulfillment / violation, surfacing as the holder's reliability. The scalar form documented here is the 1-D degenerate case of the conditional distribution generalized in LEARNING_AS_COMPRESSION.md — same field, same update rule, projected over `time` with a single trivial subtype. |
 | `contingencies` | Paths whose concreteness gate this commitment. The holder's promise is conditional on these inputs becoming concrete. |
 | `head` | The path the holder writes to. Reads of the head show whatever state the holder has produced so far (heartbeats, partial results, final value). |
 | `control` | Cancellation channel. The delegating sequence writes here to revoke; the holder observes and stops updating. |
@@ -307,5 +307,8 @@ at each step.
 5. **DSL_REQUIREMENTS.md** — how it surfaces in ft text.
 
 The narrowing-toward-concreteness view (read-side) is documented
-across the other specs. This document is the dual; together they
-describe one cascade in two complementary projections.
+across the other specs; the observational / learning-side dual is
+LEARNING_AS_COMPRESSION.md. Together with this document they
+describe one cascade in two complementary terminal projections:
+election of new write-leases, and compression of the observations
+that fulfilled the old ones.
