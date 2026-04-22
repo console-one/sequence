@@ -587,13 +587,13 @@ export class Sequence {
 
   /** Reconstruct a Type from the node at `path`. Returns undefined if
    *  no schema was ever declared there (only binds happened, with no
-   *  preceding kind declaration). The unified-store equivalent of the
-   *  legacy `proj.schemas.get(path)`.
+   *  preceding kind declaration).
    *
    *  The bind value (boundValue slot) is NOT included in the returned
-   *  Type — only the schema-declared constraints. Artifact 6 collapses
-   *  bind and schema into a single `narrow` op; until then this
-   *  preserves the existing typeAt semantics. */
+   *  Type. The full HC1 collapse — typeAt returning bind-as-literal —
+   *  is held back: it requires migrating compose/check/applyTransition/
+   *  compaction/cascade-dispatch all of which currently assume typeAt
+   *  is the declared schema. Done as a separate session. */
   private _typeOf(path: string): Type | undefined {
     const node = this.proj.nodes.get(path);
     if (!node) return undefined;
@@ -851,6 +851,50 @@ export class Sequence {
       return { ...entry, path: `${entry.path}.${keyParts.join('.')}` };
     });
 
+    // Helper: provenance enforcement. Runs the producedBy check on
+    // any schema that constrains the entry path. Used by both bind
+    // and schema entries — under CONSTRAINT_GRAPH.md HC4, every
+    // narrowing of any constraint at a path is subject to the same
+    // pre-mount authorization, regardless of which op triggered it.
+    // (R-A6.7.2: a schema mount that lands a literal constraint
+    // surfaces that literal as a value via Session A's read-side
+    // unification; provenance must reject it the same way it would
+    // reject a bind of the same value.)
+    const checkProvenance = (entryPath: string, schemaForCheck: Type): MountResult | null => {
+      const provenanceCs = constraintsOf(schemaForCheck, 'producedBy');
+      for (const pc of provenanceCs) {
+        const [requiredProducer, maxAge] = pc.args as [string, number | undefined];
+        const author = blockOpts?.author;
+        const authorMatch = author === requiredProducer;
+        let execMatch = false;
+        for (const [p, v] of this._iterateLeafValues()) {
+          if (!p.startsWith('_exec.') || !p.endsWith('.invoked')) continue;
+          if (v !== requiredProducer) continue;
+          const execSeqStr = p.split('.')[1];
+          const produced = this._leafValueAt(`_exec.${execSeqStr}.produced`) as string[] | undefined;
+          if (produced?.includes(entryPath)) {
+            if (maxAge !== undefined) {
+              const execTime = this._leafValueAt(`_exec.${execSeqStr}.time`) as number | undefined;
+              if (execTime !== undefined && (time - execTime) > maxAge) continue;
+            }
+            execMatch = true;
+            break;
+          }
+        }
+        if (!authorMatch && !execMatch) {
+          return {
+            ok: false, blockSeq, nextWake: this.nextWake(),
+            gaps: [{
+              path: entryPath,
+              reason: `provenance required: must be produced by "${requiredProducer}"${maxAge ? ` within ${maxAge}ms` : ''}`,
+              constraint: pc,
+            }],
+          };
+        }
+      }
+      return null;
+    };
+
     // Type-check + resolve defaults/transitions (copy to avoid mutation)
     const resolved: MountEntry[] = [];
     for (const entry of entries) {
@@ -866,45 +910,8 @@ export class Sequence {
             this.indexBlock(block);
             return { ok: false, blockSeq, gaps: (result as any).gaps, nextWake: this.nextWake() };
           }
-          // Provenance enforcement: if schema has producedBy constraints,
-          // the mounting block must satisfy them. Checked at admission, not after.
-          const provenanceCs = constraintsOf(schema, 'producedBy');
-          for (const pc of provenanceCs) {
-            const [requiredProducer, maxAge] = pc.args as [string, number | undefined];
-            const author = blockOpts?.author;
-            // Check 1: block author matches required producer
-            const authorMatch = author === requiredProducer;
-            // Check 2: there exists an exec record where this value was produced by the required capability
-            let execMatch = false;
-            for (const [p, v] of this._iterateLeafValues()) {
-              if (!p.startsWith('_exec.') || !p.endsWith('.invoked')) continue;
-              if (v !== requiredProducer) continue;
-              const execSeqStr = p.split('.')[1];
-              const produced = this._leafValueAt(`_exec.${execSeqStr}.produced`) as string[] | undefined;
-              if (produced?.includes(entry.path)) {
-                // Check maxAge if specified
-                if (maxAge !== undefined) {
-                  const execTime = this._leafValueAt(`_exec.${execSeqStr}.time`) as number | undefined;
-                  if (execTime !== undefined && (time - execTime) > maxAge) continue; // expired
-                }
-                execMatch = true;
-                break;
-              }
-            }
-            if (!authorMatch && !execMatch) {
-              // Hard rejection — NOT a resumable suspended block.
-              // Provenance failures cannot be retried by changing other state;
-              // the mounting block itself must carry the right author/evidence.
-              return {
-                ok: false, blockSeq, nextWake: this.nextWake(),
-                gaps: [{
-                  path: entry.path,
-                  reason: `provenance required: must be produced by "${requiredProducer}"${maxAge ? ` within ${maxAge}ms` : ''}`,
-                  constraint: pc,
-                }],
-              };
-            }
-          }
+          const provReject = checkProvenance(entry.path, schema);
+          if (provReject) return provReject;
         }
         resolved.push({ ...entry, value: val });
         // Track provenance: which fields were user-provided vs defaulted
@@ -914,6 +921,25 @@ export class Sequence {
             this._writeBind(`${entry.path}.${key}._provenance`, defaultSet.has(key) ? 'default' : 'user');
           }
         }
+      } else if (entry.op === 'schema' && this.instantiatingIndex !== true) {
+        // A schema mount that lands a `literal` constraint surfaces
+        // that literal as a value via the Session A read-side
+        // unification — the same observable effect a bind would have.
+        // When the path's existing schema declares `producedBy`, that
+        // value-establishing schema mount must satisfy provenance the
+        // same way a bind would. (Schemas that only DECLARE policy —
+        // adding producedBy itself, or constraining without binding a
+        // value — are exempt; they don't write anything observable.)
+        const incoming = entry.value as Type | undefined;
+        const incomingHasLiteral = incoming?.constraints.some(c => c.op === 'literal');
+        if (incomingHasLiteral) {
+          const existing = this.typeAt(entry.path);
+          if (existing && constraintsOf(existing, 'producedBy').length > 0) {
+            const provReject = checkProvenance(entry.path, existing);
+            if (provReject) return provReject;
+          }
+        }
+        resolved.push(entry);
       } else {
         resolved.push(entry);
       }
@@ -2757,6 +2783,34 @@ export class Sequence {
         // Write capability list as a value — readable via get('_caps')
         this._writeBind('_caps', [...this.proj.capabilities.keys()]);
         break;
+      case 'narrow': {
+        // CONSTRAINT_GRAPH.md Artifact 6 R-A6.1. Compose constraints
+        // into the constraint set at path. The kernel-level write
+        // primitive that bind and schema desugar to.
+        //
+        // The value MUST be a Constraint[]. Literal constraints in the
+        // list update the bind value (boundValue slot); other
+        // constraints accumulate as schema-side narrowings.
+        const constraints = (entry.value ?? []) as Constraint[];
+        for (const c of constraints) {
+          if (c.op === 'literal') {
+            this._writeBind(entry.path, c.args[0]);
+          } else {
+            // Compose this single constraint into the schema side. We
+            // synthesize a Type with kind preserved from any existing
+            // schema (or 'any' if absent) so the partial narrowing
+            // doesn't lose the path's declared kind.
+            const existing = this._typeOf(entry.path);
+            const merged: Type = {
+              kind: existing?.kind ?? 'any',
+              constraints: [...(existing?.constraints ?? []), c],
+              meta: existing?.meta,
+            };
+            this._writeSchema(entry.path, merged);
+          }
+        }
+        break;
+      }
       case 'policy': this.proj.policies.set(entry.path, entry.value as any); break;
       case 'invalidate': this.invalidatedBlocks.add(entry.value as number); break;
     }

@@ -145,15 +145,21 @@ function rejectReason(result: { gaps?: { reason?: string }[] }, fallback: string
 }
 
 function collectLeaves(seq: Sequence, root: string, maxDepth: number, out: string[]): void {
-  const rootValue = seq.get(root);
-  if (rootValue !== undefined) out.push(root);
   walk(root, 0);
   function walk(prefix: string, depth: number): void {
     if (depth >= maxDepth) return;
-    for (const child of seq.keys(prefix)) {
-      const path = `${prefix}.${child}`;
-      if (seq.get(path) !== undefined) out.push(path);
-      walk(path, depth + 1);
+    const children = seq.keys(prefix);
+    if (children.length === 0) {
+      // Genuine leaf — no further structure under this path. Add it
+      // iff something resolves there. (Under Session A's read-side
+      // unification, parents with object children resolve via
+      // structural collection — those are NOT leaves and must not
+      // be moved as opaque blobs by rotation. R-A6.7.3.)
+      if (seq.get(prefix) !== undefined) out.push(prefix);
+      return;
+    }
+    for (const child of children) {
+      walk(`${prefix}.${child}`, depth + 1);
     }
   }
 }

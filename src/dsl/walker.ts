@@ -270,7 +270,15 @@ export function walk(
         // If the value is concrete (literal/object with all literals), mount as bind.
         // If it's a type (schema), mount as schema.
         if (isConcrete(stmt.value)) {
-          mounts.push(seq.mount('schema', stmt.path, type));
+          // Schema mount carries the kind only — strip the literal so a
+          // gated `=` (e.g. `x = "ready" when auth EXISTS`) doesn't land
+          // the value through the unconditional schema. The bind below
+          // carries the value and is gated by `opts.where`. (Surfaced by
+          // Session A's read-side unification: schema-with-literal is
+          // observable as a value via get(), so a double-emit lets the
+          // value escape the where clause. R-A6.7.1.)
+          const schemaOnly: Type = { ...type, constraints: type.constraints.filter(c => c.op !== 'literal') };
+          mounts.push(seq.mount('schema', stmt.path, schemaOnly));
           mounts.push(seq.mount('bind', stmt.path, toValue(stmt.value, seq), opts));
         } else {
           mounts.push(seq.mount('schema', stmt.path, type, opts));
