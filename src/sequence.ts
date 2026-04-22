@@ -1584,7 +1584,56 @@ export class Sequence {
     //    precedence over the aliased template default.
     const direct = this.proj.values.get(path);
     if (direct !== undefined) return direct;
-    // 3. Ancestor-ref walk — the install-via-ref primitive. If
+    // 3. SCHEMA-AS-VALUE: if the schema at this path narrows to a
+    //    `literal(v)` constraint, that literal IS the value. Per
+    //    the substrate's continuum invariant, a value is a type
+    //    that has consumed all available constraint space — a
+    //    `literal` constraint IS that case. Reading the value
+    //    must surface it whether it landed via `bind` (proj.values)
+    //    or via `schema(X, createType(kind, [literal(v)]))` —
+    //    these are operationally equivalent narrowings to one
+    //    inhabitant.
+    if (schema) {
+      const lit = constraintOf(schema, 'literal');
+      if (lit !== undefined) return lit.args[0];
+    }
+    // 4. STRUCTURAL-LEAF-COLLECTION: if no direct value exists at
+    //    this path but the path has children, walk them and build
+    //    the structured value from the leaves. This is the
+    //    leaves-as-values reading: a node with decomposing
+    //    constraints (object props, array elements) is the
+    //    structural form of its leaves' values. Hoist uses the
+    //    same traversal pattern; this collapses both into one
+    //    reader.
+    //
+    //    Guard: only fire when the path is genuinely object-shaped
+    //    OR has no schema (free-form paths). Fn-typed paths have
+    //    sub-paths that are CONFIG (endpoint, auth, limits) not
+    //    structural value — their "value" comes from invocation,
+    //    not from collecting children. Same for string/number/
+    //    boolean/array primitives where children are sidecars.
+    const isObjectShaped = !schema || schema.kind === 'object';
+    const valueChildren = isObjectShaped ? (this.proj.values as PathMap<unknown>).childSegments(path) : [];
+    const schemaChildren = isObjectShaped && schema ? (this.proj.schemas as PathMap<Type>).childSegments(path) : [];
+    if (valueChildren.length > 0 || schemaChildren.length > 0) {
+      const segs = new Set<string>();
+      for (const s of valueChildren) segs.add(s);
+      for (const s of schemaChildren) segs.add(s);
+      const obj: Record<string, unknown> = {};
+      let any = false;
+      for (const seg of segs) {
+        if (seg === '*') continue;       // glob slot — never a real child
+        if (seg.startsWith('_')) continue; // kernel-internal sidecars (_provenance etc.)
+        const childPath = path ? `${path}.${seg}` : seg;
+        const childVal = this.get(childPath, visited);
+        if (childVal !== undefined) {
+          obj[seg] = childVal;
+          any = true;
+        }
+      }
+      if (any) return obj;
+    }
+    // 5. Ancestor-ref walk — the install-via-ref primitive. If
     //    an ancestor path has a ref schema, rewrite this read as
     //    `{refTarget}.{suffix}` and recurse. This is what makes
     //    `alice.tools.openai = ref(_templates.openai)` actually
@@ -2450,6 +2499,22 @@ export class Sequence {
         if (former !== null && typeof former === 'object' && !Array.isArray(former)) {
           for (const k of Object.keys(former as Record<string, unknown>)) {
             this.proj.values.delete(`${entry.path}.${k}._provenance`);
+          }
+        }
+        // SCHEMA-LITERAL CLEAR: under the unified read model, a
+        // value can come from `proj.values` OR from a `literal()`
+        // constraint in the schema (the walker's "schema-as-value"
+        // step). Delete must clear both representations or the
+        // value re-emerges via the schema literal. Strip literal
+        // constraints from the schema; if the schema becomes empty
+        // (was JUST the literal), drop it entirely.
+        const sch = this.proj.schemas.get(entry.path);
+        if (sch && sch.constraints.some(c => c.op === 'literal')) {
+          const remaining = sch.constraints.filter(c => c.op !== 'literal');
+          if (remaining.length === 0) {
+            this.proj.schemas.delete(entry.path);
+          } else {
+            this.proj.schemas.set(entry.path, { ...sch, constraints: remaining });
           }
         }
         break;
