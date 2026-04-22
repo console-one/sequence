@@ -805,6 +805,42 @@ export class Sequence {
    *  bind value. */
   iterateValues(): Iterable<[string, unknown]> { return this._iterateLeafValues(); }
 
+  /** Promote accumulated observations at each path into a tighter
+   *  declared type — the lattice-join of observed bind values. The
+   *  candidate is a union of the distinct literals seen at the path;
+   *  mounted with owner=`derived:learning` so `releaseOwner` vacates
+   *  it. Returns paths promoted.
+   *
+   *  MDL gate: at least `minEvidence` distinct observations; skip if
+   *  the current declared type already covers the candidate. */
+  promoteRefinements(opts?: { minEvidence?: number }): string[] {
+    const minEvidence = opts?.minEvidence ?? 3;
+    const observed = new Map<string, Set<unknown>>();
+    for (const b of this.blocks) {
+      if (b.status !== 'applied' || this.invalidatedBlocks.has(b.seq)) continue;
+      for (const e of b.entries) {
+        if (e.op !== 'bind' || e.path.startsWith('_')) continue;
+        let set = observed.get(e.path);
+        if (!set) { set = new Set(); observed.set(e.path, set); }
+        set.add(e.value);
+      }
+    }
+    const promoted: string[] = [];
+    for (const [p, set] of observed) {
+      if (set.size < minEvidence) continue;
+      const values = [...set];
+      const kind = (['number', 'string', 'boolean'] as const).find(k => values.every(v => typeof v === k)) ?? 'any';
+      const candidate: Type = values.length === 1
+        ? { kind, constraints: [{ op: 'literal', args: [values[0]] }] }
+        : { kind, constraints: [{ op: 'or_clause', args: values.map(v => ({ op: 'literal', args: [v] })) }] };
+      const current = this._declaredTypeOf(p);
+      if (current && isNever(compose(current, candidate))) continue;
+      this._writeSchema(p, candidate, 'derived:learning');
+      promoted.push(p);
+    }
+    return promoted;
+  }
+
   // ═══ MOUNT — the single operation ═════════════════════════════════
 
   mount(
