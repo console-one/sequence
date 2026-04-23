@@ -359,55 +359,23 @@ at each step.
   per cascade turn; enforce that a promoted subtype must stand for
   at least one turn before its children are candidates.
 
-## Relationship to other architectural commitments
+## Relationship to other commitments
 
-- **COMMITMENTS.md (landed)** — the write-side dual. The
-  `distribution` field this document lifts from scalar to
-  conditional is the same field COMMITMENTS.md declares; this
-  document generalizes it without replacing it.
+- **COMMITMENTS.md** — write-side dual. The `distribution` field
+  this doc lifts from scalar to conditional is the same field
+  commitments declare; this generalizes without replacing.
+- **Narrative-is-tool unification** — a narrative's gaps ARE types.
+  This doc adds that those gaps additionally carry posteriors
+  learned from historical fills; a narrative sharpens as its tool
+  accumulates observations.
+- **Reader-side observability** — a reader contract that renders a
+  commitment's posterior, provenance, and refinement history is
+  the observability surface for learning. Same render machinery
+  as any other reader.
 
-- **AXIOMS A15 / A16 (landed)** — probability = concreteness
-  position; compose IS probability update. This document extends
-  that reading: the substrate's lattice is not a fixed ontology
-  but a structure that sharpens under observation, with
-  promotion-of-refinement as the mechanism.
+## Reading order
 
-- **AXIOMS A17 preserves (landed)** — the backward inference
-  channel. Sampling from the posterior predictive to synthesize a
-  required input uses the same channel. Posterior-conditioned
-  backward inference is strictly additive to the existing rule.
-
-- **concreteness-distribution (landed)** — the three-factor time-
-  indexed belief (completion × typeSurvival × provenance). This
-  document adds input-subtype conditioning as an additional factor
-  available to the composed cdf. Existing code continues to see a
-  scalar cdf — the richer structure is a generalization.
-
-- **Narrative-is-tool unification (landed)** — a narrative's gaps
-  ARE types. This document adds that those gaps additionally carry
-  posteriors learned from historical fills; a narrative sharpens
-  as its capability accumulates observations.
-
-- **Reader-side observability (deferred)** — a reader contract
-  that renders a commitment's posterior, provenance, and
-  refinement history is the observability surface for learning.
-  Same render machinery as any other reader.
-
-## Reading order for someone arriving at the substrate
-
-1. **AXIOMS.md** — the load-bearing invariants.
-2. **ARCHITECTURE.md** — how the pieces fit.
-3. **COMMITMENTS.md** — what the substrate is doing, write-side.
-4. **This document** — what the substrate is doing, learning-side.
-5. **CAPABILITY_INSTALLATION.md** — what the substrate is doing,
-   install-side.
-6. **KERNEL_REQUIREMENTS.md** — the contract the kernel implements.
-7. **DSL_REQUIREMENTS.md** — how it surfaces in ft text.
-
-COMMITMENTS.md (write-side), this document (learning-side), and
-CAPABILITY_INSTALLATION.md (install-side) together describe one
-cascade in three terminal projections: election of new write-
-leases, compression of the observations that fulfilled the old
-ones, and acquisition of the capabilities that produce both.
-One substrate, one log, one loop — three entry points into the
-same machine.
+1. **NABLA.md** (in `ft/specs/docs/`) — the single traversal operation; posterior updates are this doc's specialization of it.
+2. **COMMITMENTS.md** — write-side primitive (election).
+3. **This document** — observational side (posterior update on fulfillment).
+4. **DSL_REQUIREMENTS.md** — how this surfaces in ft text.

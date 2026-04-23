@@ -298,19 +298,9 @@ at each step.
   Org Scheduler → User Session → Browser) is one connected set of
   outstanding commitments, queryable end-to-end.
 
-## Reading order for someone arriving at the substrate
+## Reading order
 
-1. **AXIOMS.md** — the load-bearing invariants.
-2. **ARCHITECTURE.md** — how the pieces fit.
-3. **This document** — what the substrate is doing, write-side.
-4. **KERNEL_REQUIREMENTS.md** — the contract the kernel implements.
-5. **DSL_REQUIREMENTS.md** — how it surfaces in ft text.
-
-The narrowing-toward-concreteness view (read-side) is documented
-across the other specs; the observational / learning-side dual is
-LEARNING_AS_COMPRESSION.md, and the install-side dual is
-CAPABILITY_INSTALLATION.md. Together the three describe one
-cascade in three complementary terminal projections: election of
-new write-leases (this document), compression of the observations
-that fulfilled old ones (learning-side), and acquisition of the
-capabilities that produce both (install-side).
+1. **NABLA.md** (in `ft/specs/docs/`) — the single traversal operation; this doc's commitments are elected at its cascade fixed point.
+2. **This document** — write-side primitive.
+3. **LEARNING_AS_COMPRESSION.md** — observational dual (posterior updates on fulfillment).
+4. **DSL_REQUIREMENTS.md** — how this surfaces in ft text.
