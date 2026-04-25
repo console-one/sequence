@@ -20,6 +20,8 @@ import {
   advanceClock,
   installReader,
   hoistForReader,
+  installAccessPosterior,
+  accessScore,
   installCrossSequence,
   receiveFromPeer,
   renderDocument,
@@ -30,10 +32,21 @@ import {
   feasibility,
   subtypeKey,
   registerRefiner,
+  proposePlan,
+  installProposalHandler,
+  installRefundRule,
+  budgetedEvaluator,
+  negotiatePlan,
   type Outgoing,
   type DocSection,
+  type ProposalEvaluator,
+  type PlanStep,
+  type Plan,
 } from '../stdlib';
-import { createType, param, returns, impl, indexSpec, bindFrom, temporal } from '../../src/type';
+import {
+  createType, param, returns, impl, indexSpec, bindFrom, temporal, property,
+} from '../../src/type';
+import type { Constraint } from '../../src/type';
 
 const numberFn = () => createType('fn', [
   param(createType('number')),
@@ -583,6 +596,129 @@ describe('stdlib: reader + hoist', () => {
     expect(L.text).not.toContain('right');
     expect(R.text).toContain('right.y = 2');
     expect(R.text).not.toContain('left');
+  });
+});
+
+// ═══ Access posterior + budget-hoist (Wire 3) ═══
+
+describe('stdlib: access posterior', () => {
+  test('installAccessPosterior counts hits and misses per path', () => {
+    const s = new Sequence();
+    installAccessPosterior(s);
+    s.insert({ path: 'hot', value: 1 });
+    s.insert({ path: 'warm', value: 2 });
+    s.insert({ path: 'cold', value: 3 });
+    // Read hot 5 times, warm 2, cold 0
+    s.get('hot'); s.get('hot'); s.get('hot'); s.get('hot'); s.get('hot');
+    s.get('warm'); s.get('warm');
+    expect(s.get('_access.hot.hits')).toBe(5);
+    expect(s.get('_access.warm.hits')).toBe(2);
+    expect(s.get('_access.cold.hits')).toBeUndefined();
+  });
+
+  test('misses are tallied at .misses when cell absent or type-only', () => {
+    const s = new Sequence();
+    installAccessPosterior(s);
+    s.insert({ path: 'slot', type: createType('string') });
+    s.get('slot'); s.get('slot'); s.get('slot');
+    s.get('ghost');
+    expect(s.get('_access.slot.misses')).toBe(3);
+    expect(s.get('_access.ghost.misses')).toBe(1);
+  });
+
+  test('_-prefixed internal paths are NOT tracked (no infinite feedback)', () => {
+    const s = new Sequence();
+    installAccessPosterior(s);
+    s.insert({ path: 'user', value: 'alice' });
+    s.get('user');
+    // reading _access.user.hits during accessScore() would cycle if tracked
+    s.get('_access.user.hits');
+    expect(s.get('_access._access.user.hits.hits')).toBeUndefined();
+  });
+
+  test('accessScore monotone in total access count', () => {
+    const s = new Sequence();
+    installAccessPosterior(s);
+    s.insert({ path: 'a', value: 1 });
+    s.insert({ path: 'b', value: 2 });
+    s.get('a');
+    for (let i = 0; i < 20; i++) s.get('b');
+    const sa = accessScore(s, 'a');
+    const sb = accessScore(s, 'b');
+    expect(sb).toBeGreaterThan(sa);
+  });
+
+  test('accessScore returns 0.5 uniform prior when no posterior yet', () => {
+    const s = new Sequence();
+    // Don't install posterior
+    expect(accessScore(s, 'anything')).toBe(0.5);
+  });
+});
+
+describe('stdlib: budget-hoist (Wire 3)', () => {
+  test('budget mode: high-posterior cells materialize first; low-posterior become compressed tokens', () => {
+    const s = new Sequence();
+    installAccessPosterior(s);
+    s.insert({ path: 'tools.hot', value: 'frequently_used' });
+    s.insert({ path: 'tools.cold', value: 'rarely_used' });
+    // Warm hot with lots of reads; cold stays cold
+    for (let i = 0; i < 10; i++) s.get('tools.hot');
+    // Allocate a TIGHT budget — only enough for one line
+    installReader(s, 'tools', { source: 'tools.*', budget: 40 });
+    const hr = hoistForReader(s, 'tools');
+    // hot should be materialized (value inline); cold should be compressed
+    expect(hr.text).toMatch(/tools\.hot = /);
+    expect(hr.text).toMatch(/\[\[ tools\.cold : /);
+    // posterior annotation present on the compressed line
+    expect(hr.text).toMatch(/\| p=\d/);
+  });
+
+  test('budget mode respects budget exactly (tight enough to drop both into compressed)', () => {
+    const s = new Sequence();
+    installAccessPosterior(s);
+    s.insert({ path: 'x.one', value: 'a_longish_value_here' });
+    s.insert({ path: 'x.two', value: 'another_longish_value_here' });
+    installReader(s, 'x', { source: 'x.*', budget: 5 });
+    const hr = hoistForReader(s, 'x');
+    // Nothing fits inline under 5 chars — both as compressed tokens
+    expect(hr.text).not.toContain('x.one = ');
+    expect(hr.text).not.toContain('x.two = ');
+  });
+
+  test('budget mode falls back to DFS uniform when no posterior installed', () => {
+    const s = new Sequence();
+    // No installAccessPosterior call
+    s.insert({ path: 'r.a', value: 1 });
+    s.insert({ path: 'r.b', value: 2 });
+    s.insert({ path: 'r.c', value: 3 });
+    installReader(s, 'all', { source: 'r.*', budget: 1000 });
+    const hr = hoistForReader(s, 'all');
+    // All three materialized because budget is huge
+    expect(hr.text).toContain('r.a = 1');
+    expect(hr.text).toContain('r.b = 2');
+    expect(hr.text).toContain('r.c = 3');
+  });
+
+  test('legacy depth mode still works (no budget → depth cap applied)', () => {
+    const s = new Sequence();
+    s.insert({ path: 'root.a.deep', value: 1 });
+    s.insert({ path: 'root.b', value: 2 });
+    installReader(s, 'r', { source: 'root', depth: 1 });
+    const hr = hoistForReader(s, 'r');
+    expect(hr.text).toContain('root.b = 2');
+    expect(hr.text).not.toContain('root.a.deep');
+  });
+
+  test('budget mode emits compressed tokens with posterior annotation for gaps', () => {
+    const s = new Sequence();
+    installAccessPosterior(s);
+    s.insert({ path: 'slot', type: createType('string') });
+    // Reader queries cause misses to accumulate
+    s.get('slot'); s.get('slot');
+    installReader(s, 'r', { source: 'slot', budget: 10000 });
+    const hr = hoistForReader(s, 'r');
+    expect(hr.text).toMatch(/\[\[ slot : string \| p=/);
+    expect(hr.gaps).toHaveLength(1);
   });
 });
 
@@ -1529,6 +1665,521 @@ describe('stdlib: candidate plans + chooser-participated selection', () => {
       { kind: 'candidates', heading: 'PLANS', goalPath: 'g', goalType: createType('number') },
     ]);
     expect(text).toContain('expectedMs=');
+  });
+});
+
+// ═══ Cross-sequence plan negotiation (planned resource consumption) ═══
+
+describe('stdlib: cross-sequence plan negotiation', () => {
+  test('local proposal within budget → accepted + budget decrements', () => {
+    const org = new Sequence();
+    installStdLib(org);
+    org.insert({ path: '_budget.tokens.remaining', value: 100 });
+    installProposalHandler(org, 'tokens', '_budget.tokens.remaining');
+
+    const id = proposePlan(org, { from: 'user', resource: 'tokens', estimatedCost: 30 });
+
+    expect(org.get(`proposals.${id}.status`)).toBe('accepted');
+    expect(org.get(`proposals.${id}.grantedAt`)).toBeDefined();
+    expect(org.get('_budget.tokens.remaining')).toBe(70);
+  });
+
+  test('over-budget proposal → rejected with counter.suggestedCost = remaining', () => {
+    const org = new Sequence();
+    installStdLib(org);
+    org.insert({ path: '_budget.tokens.remaining', value: 20 });
+    installProposalHandler(org, 'tokens', '_budget.tokens.remaining');
+
+    const id = proposePlan(org, { from: 'user', resource: 'tokens', estimatedCost: 50 });
+
+    expect(org.get(`proposals.${id}.status`)).toBe('rejected');
+    expect(org.get(`proposals.${id}.reason`)).toContain('budget');
+    expect(org.get(`proposals.${id}.counter.suggestedCost`)).toBe(20);
+    expect(org.get('_budget.tokens.remaining')).toBe(20); // unchanged
+  });
+
+  test('sequential proposals deplete budget; later ones rejected', () => {
+    const org = new Sequence();
+    installStdLib(org);
+    org.insert({ path: '_budget.tokens.remaining', value: 50 });
+    installProposalHandler(org, 'tokens', '_budget.tokens.remaining');
+
+    const id1 = proposePlan(org, { from: 'user', resource: 'tokens', estimatedCost: 20 });
+    const id2 = proposePlan(org, { from: 'user', resource: 'tokens', estimatedCost: 20 });
+    const id3 = proposePlan(org, { from: 'user', resource: 'tokens', estimatedCost: 20 });
+
+    expect(org.get(`proposals.${id1}.status`)).toBe('accepted');
+    expect(org.get(`proposals.${id2}.status`)).toBe('accepted');
+    expect(org.get(`proposals.${id3}.status`)).toBe('rejected');
+    expect(org.get('_budget.tokens.remaining')).toBe(10);
+    expect(org.get(`proposals.${id3}.counter.suggestedCost`)).toBe(10);
+  });
+
+  test('targetTool reliability gate: budget OK but tool too unreliable → reject', () => {
+    const org = new Sequence();
+    installStdLib(org);
+    org.insert({ path: '_budget.tokens.remaining', value: 1000 });
+    // Tool exists but has a terrible track record.
+    org.insert({ path: '_holders.shakyTool.reliability.alpha', value: 1 });
+    org.insert({ path: '_holders.shakyTool.reliability.beta', value: 19 });
+    installProposalHandler(
+      org, 'tokens', '_budget.tokens.remaining',
+      budgetedEvaluator(0.5),
+    );
+
+    const id = proposePlan(org, {
+      from: 'user', resource: 'tokens', estimatedCost: 10,
+      targetTool: 'shakyTool',
+    });
+
+    expect(org.get(`proposals.${id}.status`)).toBe('rejected');
+    expect(org.get(`proposals.${id}.reason`)).toContain('reliability');
+  });
+
+  test('cross-sequence: user proposes → org evaluates → user observes verdict', () => {
+    const user = new Sequence();
+    const org = new Sequence();
+
+    installStdLib(user);
+    installStdLib(org);
+    installCrossSequence(user, 'user', (d) => receiveFromPeer(org, 'user', d), ['proposals.*']);
+    installCrossSequence(org, 'org', (d) => receiveFromPeer(user, 'org', d), ['proposals.*']);
+
+    // Org owns the budget and the handler
+    org.insert({ path: '_budget.tokens.remaining', value: 100 });
+    installProposalHandler(org, 'tokens', '_budget.tokens.remaining');
+
+    // User proposes locally; forwarded to org
+    const id = proposePlan(user, { from: 'user', resource: 'tokens', estimatedCost: 25 });
+
+    // Both sides see the accept
+    expect(org.get(`proposals.${id}.status`)).toBe('accepted');
+    expect(user.get(`proposals.${id}.status`)).toBe('accepted');
+    expect(org.get('_budget.tokens.remaining')).toBe(75);
+    // Budget is private to org — NOT forwarded (underscore-prefixed)
+    expect(user.get('_budget.tokens.remaining')).toBeUndefined();
+  });
+
+  test('custom evaluator can counter-propose alternative terms', () => {
+    const org = new Sequence();
+    installStdLib(org);
+    org.insert({ path: '_budget.tokens.remaining', value: 100 });
+
+    // Custom: if cost > half the budget, counter-offer at half-budget.
+    const evaluator: ProposalEvaluator = (c) => {
+      if (c.estimatedCost > c.budgetRemaining / 2) {
+        return {
+          verdict: 'counter',
+          reason: 'exceeds single-request limit',
+          counter: { maxCost: c.budgetRemaining / 2, splitIntoChunks: true },
+        };
+      }
+      return { verdict: 'accept' };
+    };
+    installProposalHandler(org, 'tokens', '_budget.tokens.remaining', evaluator);
+
+    const id = proposePlan(org, { from: 'user', resource: 'tokens', estimatedCost: 80 });
+
+    expect(org.get(`proposals.${id}.status`)).toBe('countered');
+    expect(org.get(`proposals.${id}.counter.maxCost`)).toBe(50);
+    expect(org.get(`proposals.${id}.counter.splitIntoChunks`)).toBe(true);
+    expect(org.get('_budget.tokens.remaining')).toBe(100); // not touched on counter
+  });
+
+  test('multiple resources coexist on one org; handlers scoped by resource name', () => {
+    const org = new Sequence();
+    installStdLib(org);
+    org.insert({ path: '_budget.tokens.remaining', value: 100 });
+    org.insert({ path: '_budget.compute.remaining', value: 5 });
+    installProposalHandler(org, 'tokens', '_budget.tokens.remaining');
+    installProposalHandler(org, 'compute', '_budget.compute.remaining');
+
+    const tokensId = proposePlan(org, { from: 'user', resource: 'tokens', estimatedCost: 50 });
+    const computeId = proposePlan(org, { from: 'user', resource: 'compute', estimatedCost: 3 });
+    const computeBig = proposePlan(org, { from: 'user', resource: 'compute', estimatedCost: 10 });
+
+    expect(org.get(`proposals.${tokensId}.status`)).toBe('accepted');
+    expect(org.get(`proposals.${computeId}.status`)).toBe('accepted');
+    expect(org.get(`proposals.${computeBig}.status`)).toBe('rejected');
+    expect(org.get('_budget.tokens.remaining')).toBe(50);
+    expect(org.get('_budget.compute.remaining')).toBe(2);
+  });
+
+  test('accepted proposal + reliability tracking: budget usage becomes evidence for chooser', () => {
+    // Full loop: user makes two proposals; the first is accepted and
+    // fulfilled successfully; the second comes in and observes the
+    // updated reliability through normal cascade. This proves that the
+    // resource-grant record AND the feasibility posterior share one
+    // substrate — no separate observability plane.
+    const org = new Sequence();
+    installStdLib(org);
+    org.impls.set('compute', (n: number) => n * 2);
+    org.insert({
+      path: 'computeTool',
+      type: createType('fn', [param(createType('number')), returns(createType('number')), impl('compute')]),
+    });
+    org.insert({ path: '_budget.tokens.remaining', value: 1000 });
+    installProposalHandler(org, 'tokens', '_budget.tokens.remaining', budgetedEvaluator(0.3));
+
+    const p1 = proposePlan(org, {
+      from: 'user', resource: 'tokens', estimatedCost: 10, targetTool: 'computeTool',
+    });
+    expect(org.get(`proposals.${p1}.status`)).toBe('accepted');
+
+    // Drive actual tool invocations so reliability accumulates
+    for (let i = 0; i < 5; i++) org.insert({ path: 'computeTool', value: i });
+    expect(org.get('_holders.computeTool.reliability.alpha')).toBe(6);
+
+    // Future proposals on this tool see a STRONGER gate (above 0.3 now
+    // comfortably). Chooser reads rising posterior, re-plans against
+    // the same substrate.
+    const p2 = proposePlan(org, {
+      from: 'user', resource: 'tokens', estimatedCost: 10, targetTool: 'computeTool',
+    });
+    expect(org.get(`proposals.${p2}.status`)).toBe('accepted');
+    expect(org.get('_budget.tokens.remaining')).toBe(980);
+  });
+});
+
+// ═══ Chained negotiation (atomic all-or-nothing resource acquisition) ═══
+
+describe('stdlib: chained negotiation', () => {
+  // Helper: make a minimal plan with two steps on two different tools
+  const twoStepPlan = (): Plan => ({
+    goalPath: 'goal',
+    goalType: createType('any'),
+    steps: [
+      {
+        toolPath: 'orgA.tool',
+        inputSource: { kind: 'literal', value: 1 },
+        inputType: createType('any'),
+        outputType: createType('any'),
+        reliability: 1,
+      },
+      {
+        toolPath: 'orgB.tool',
+        inputSource: { kind: 'literal', value: 2 },
+        inputType: createType('any'),
+        outputType: createType('any'),
+        reliability: 1,
+      },
+    ],
+    gaps: [],
+    meetable: true,
+    expectedReliability: 1,
+  });
+
+  const owner: (s: PlanStep) => string = (s) =>
+    s.toolPath.startsWith('orgA.') ? 'orgA'
+      : s.toolPath.startsWith('orgB.') ? 'orgB'
+      : 'local';
+
+  test('all peers accept → outcome=executed, all budgets decrement', async () => {
+    const user = new Sequence();
+    const orgA = new Sequence();
+    const orgB = new Sequence();
+
+    [user, orgA, orgB].forEach(s => installStdLib(s));
+
+    // Route proposals both ways between user and each org
+    const wireTwo = (a: Sequence, aId: string, b: Sequence, bId: string) => {
+      installCrossSequence(a, aId, (d) => receiveFromPeer(b, aId, d), ['proposals.*']);
+      installCrossSequence(b, bId, (d) => receiveFromPeer(a, bId, d), ['proposals.*']);
+    };
+    wireTwo(user, 'user', orgA, 'orgA');
+    // Note: a single Sequence can only have one cross-sequence install;
+    // for a multi-peer test we route via a hub pattern using the fact
+    // that installCrossSequence appends one rule per call.
+    // Simpler: re-use the same wiring pattern but with a second install.
+    // Actually installCrossSequence overwrites `_self.identity` and the
+    // rule id prefix — not safe for multi-peer. For this test use a
+    // single composite forwarder.
+    installCrossSequence(user, 'user', (d) => {
+      receiveFromPeer(orgA, 'user', d);
+      receiveFromPeer(orgB, 'user', d);
+    }, ['proposals.*']);
+    installCrossSequence(orgA, 'orgA', (d) => receiveFromPeer(user, 'orgA', d), ['proposals.*']);
+    installCrossSequence(orgB, 'orgB', (d) => receiveFromPeer(user, 'orgB', d), ['proposals.*']);
+
+    orgA.insert({ path: '_budget.tokens.remaining', value: 100 });
+    orgB.insert({ path: '_budget.tokens.remaining', value: 100 });
+    installProposalHandler(orgA, 'tokens', '_budget.tokens.remaining');
+    installProposalHandler(orgB, 'tokens', '_budget.tokens.remaining');
+    installRefundRule(orgA, 'tokens', '_budget.tokens.remaining');
+    installRefundRule(orgB, 'tokens', '_budget.tokens.remaining');
+
+    const result = await negotiatePlan(user, twoStepPlan(), {
+      owner,
+      resource: 'tokens',
+      costPerStep: () => 10,
+      from: 'user',
+      autoExecute: false,
+    });
+
+    expect(result.outcome).toBe('executed');
+    expect(result.rejected).toHaveLength(0);
+    expect(orgA.get('_budget.tokens.remaining')).toBe(90);
+    expect(orgB.get('_budget.tokens.remaining')).toBe(90);
+  });
+
+  test('one peer rejects → other peer\'s accept is revoked; budgets return to original', async () => {
+    const user = new Sequence();
+    const orgA = new Sequence();
+    const orgB = new Sequence();
+
+    [user, orgA, orgB].forEach(s => installStdLib(s));
+
+    installCrossSequence(user, 'user', (d) => {
+      receiveFromPeer(orgA, 'user', d);
+      receiveFromPeer(orgB, 'user', d);
+    }, ['proposals.*']);
+    installCrossSequence(orgA, 'orgA', (d) => receiveFromPeer(user, 'orgA', d), ['proposals.*']);
+    installCrossSequence(orgB, 'orgB', (d) => receiveFromPeer(user, 'orgB', d), ['proposals.*']);
+
+    orgA.insert({ path: '_budget.tokens.remaining', value: 100 });
+    orgB.insert({ path: '_budget.tokens.remaining', value: 5 }); // too small
+    installProposalHandler(orgA, 'tokens', '_budget.tokens.remaining');
+    installProposalHandler(orgB, 'tokens', '_budget.tokens.remaining');
+    installRefundRule(orgA, 'tokens', '_budget.tokens.remaining');
+    installRefundRule(orgB, 'tokens', '_budget.tokens.remaining');
+
+    const result = await negotiatePlan(user, twoStepPlan(), {
+      owner,
+      resource: 'tokens',
+      costPerStep: () => 10,
+      from: 'user',
+      autoExecute: false,
+    });
+
+    expect(result.outcome).toBe('revoked_partial');
+    expect(result.rejected).toHaveLength(1);
+    expect(result.revoked).toHaveLength(1);
+    // orgA accepted (10 < 100) then was revoked → budget restored to 100
+    expect(orgA.get('_budget.tokens.remaining')).toBe(100);
+    // orgB never accepted → budget untouched
+    expect(orgB.get('_budget.tokens.remaining')).toBe(5);
+  });
+
+  test('chain with all-local steps → executes directly, no proposals', async () => {
+    const user = new Sequence();
+    installStdLib(user);
+    user.impls.set('dup', (n: number) => n * 2);
+    user.insert({
+      path: 'localTool',
+      type: createType('fn', [param(createType('number')), returns(createType('number')), impl('dup')]),
+    });
+    user.insert({ path: 'input', value: 5 });
+
+    const plan = search(user, 'goal', createType('number'));
+    const result = await negotiatePlan(user, plan, {
+      owner: () => 'user',   // everything local
+      resource: 'tokens',
+      costPerStep: () => 0,
+      from: 'user',
+    });
+
+    expect(result.outcome).toBe('executed');
+    expect(result.proposalIds).toHaveLength(0);
+    expect(user.get('localTool.result')).toBe(10);
+  });
+
+  test('refund rule: revoking an accepted proposal restores budget', () => {
+    const org = new Sequence();
+    installStdLib(org);
+    org.insert({ path: '_budget.tokens.remaining', value: 100 });
+    installProposalHandler(org, 'tokens', '_budget.tokens.remaining');
+    installRefundRule(org, 'tokens', '_budget.tokens.remaining');
+
+    const id = proposePlan(org, { from: 'user', resource: 'tokens', estimatedCost: 40 });
+    expect(org.get(`proposals.${id}.status`)).toBe('accepted');
+    expect(org.get('_budget.tokens.remaining')).toBe(60);
+
+    org.insert({ path: `proposals.${id}.revoked`, value: true });
+    expect(org.get('_budget.tokens.remaining')).toBe(100);
+    expect(org.get(`proposals.${id}.refundedAt`)).toBeDefined();
+  });
+
+  test('refund is idempotent (double-revoke = single refund)', () => {
+    const org = new Sequence();
+    installStdLib(org);
+    org.insert({ path: '_budget.tokens.remaining', value: 100 });
+    installProposalHandler(org, 'tokens', '_budget.tokens.remaining');
+    installRefundRule(org, 'tokens', '_budget.tokens.remaining');
+
+    const id = proposePlan(org, { from: 'user', resource: 'tokens', estimatedCost: 40 });
+    org.insert({ path: `proposals.${id}.revoked`, value: true });
+    // Re-insert the same value — should be a no-op (idempotent re-insert
+    // test in kernel assures no new delta). Budget stays at 100.
+    org.insert({ path: `proposals.${id}.revoked`, value: true });
+    expect(org.get('_budget.tokens.remaining')).toBe(100);
+  });
+
+  test('refund does not fire on rejected proposals (never decremented)', () => {
+    const org = new Sequence();
+    installStdLib(org);
+    org.insert({ path: '_budget.tokens.remaining', value: 10 });
+    installProposalHandler(org, 'tokens', '_budget.tokens.remaining');
+    installRefundRule(org, 'tokens', '_budget.tokens.remaining');
+
+    const id = proposePlan(org, { from: 'user', resource: 'tokens', estimatedCost: 50 });
+    expect(org.get(`proposals.${id}.status`)).toBe('rejected');
+    // An over-eager caller revokes a rejected proposal; budget must not
+    // spuriously inflate.
+    org.insert({ path: `proposals.${id}.revoked`, value: true });
+    expect(org.get('_budget.tokens.remaining')).toBe(10);
+    expect(org.get(`proposals.${id}.refundedAt`)).toBeUndefined();
+  });
+});
+
+// ═══ ft-text round-trip (hoist produces valid DSL input) ═══
+
+describe('stdlib: hoist emits valid ft text', () => {
+  // Import the existing DSL tokenizer to verify hoist output is
+  // syntactically valid ft. Full parse+remount via walker would need
+  // an adapter between v2's insert() and walker's mount(); tokenize-
+  // without-error is the minimum round-trip check.
+  const { tokenize } = require('../../src/dsl/tokenizer');
+
+  const tokenizes = (s: string) => {
+    expect(() => tokenize(s)).not.toThrow();
+  };
+
+  test('primitive values render in ft syntax (not JSON objects-as-strings)', () => {
+    const s = new Sequence();
+    s.insert({ path: 'n', value: 42 });
+    s.insert({ path: 's', value: 'hello' });
+    s.insert({ path: 'b', value: true });
+    s.insert({ path: 'nil', value: null });
+    installReader(s, 'all', { source: '*' });
+    // hoistForReader is scoped; use '' to get everything top-level
+    installReader(s, 'top', { source: 'n' });
+    installReader(s, 'sr', { source: 's' });
+    installReader(s, 'br', { source: 'b' });
+    installReader(s, 'nilr', { source: 'nil' });
+
+    expect(hoistForReader(s, 'top').text).toContain('n = 42');
+    expect(hoistForReader(s, 'sr').text).toContain('s = "hello"');
+    expect(hoistForReader(s, 'br').text).toContain('b = true');
+    expect(hoistForReader(s, 'nilr').text).toContain('nil = null');
+  });
+
+  test('object value renders with unquoted keys and typed values', () => {
+    const s = new Sequence();
+    s.insert({ path: 'user', value: { name: 'alice', age: 30, active: true } });
+    installReader(s, 'user', { source: 'user', depth: 1 });
+    const { text } = hoistForReader(s, 'user');
+    // ft syntax: { name: "alice", age: 30, active: true }
+    expect(text).toContain('name: "alice"');
+    expect(text).toContain('age: 30');
+    expect(text).toContain('active: true');
+    tokenizes(text);
+  });
+
+  test('array value renders with bracket syntax', () => {
+    const s = new Sequence();
+    s.insert({ path: 'xs', value: [1, 2, 3] });
+    installReader(s, 'xs', { source: 'xs' });
+    const { text } = hoistForReader(s, 'xs');
+    expect(text).toContain('xs = [1, 2, 3]');
+    tokenizes(text);
+  });
+
+  test('type gap renders recursively — object schema shows property types', () => {
+    const s = new Sequence();
+    s.insert({
+      path: 'req',
+      type: createType('object', [
+        property('id', createType('string')),
+        property('count', createType('number')),
+      ]),
+    });
+    installReader(s, 'req', { source: 'req' });
+    const { text, gaps } = hoistForReader(s, 'req');
+    // gap token includes nested type structure, not "object"
+    expect(text).toContain('[[ req :');
+    expect(text).toContain('id: string');
+    expect(text).toContain('count: number');
+    expect(gaps.map(g => g.path)).toContain('req');
+    tokenizes(text);
+  });
+
+  test('fn type renders as (param) -> returns with nested structure', () => {
+    const s = new Sequence();
+    s.insert({
+      path: 'tool',
+      type: createType('fn', [
+        param(createType('object', [
+          property('q', createType('string')),
+          property('limit', createType('number'), true),
+        ])),
+        returns(createType('object', [
+          property('result', createType('string')),
+        ])),
+      ]),
+    });
+    installReader(s, 'tool', { source: 'tool' });
+    const { text } = hoistForReader(s, 'tool');
+    // Expect structure like: ({ q: string, limit?: number }) -> { result: string }
+    expect(text).toMatch(/q: string/);
+    expect(text).toMatch(/limit\?: number/);
+    expect(text).toMatch(/result: string/);
+    expect(text).toContain('-> ');
+    tokenizes(text);
+  });
+
+  test('number constraints render as range/min/max suffixes', () => {
+    const s = new Sequence();
+    // Use builder min/max constraint ops
+    const min = (v: number): Constraint => ({ op: 'min', args: [v] });
+    const max = (v: number): Constraint => ({ op: 'max', args: [v] });
+    s.insert({ path: 'bounded', type: createType('number', [min(0), max(100)]) });
+    installReader(s, 'bounded', { source: 'bounded' });
+    const { text } = hoistForReader(s, 'bounded');
+    expect(text).toContain('number 0..100');
+    tokenizes(text);
+  });
+
+  test('string pattern constraints render as /regex/ suffix', () => {
+    const s = new Sequence();
+    const pattern = (re: string): Constraint => ({ op: 'pattern', args: [re] });
+    s.insert({ path: 'email', type: createType('string', [pattern('^.+@.+$')]) });
+    installReader(s, 'email', { source: 'email' });
+    const { text } = hoistForReader(s, 'email');
+    expect(text).toContain('string /^.+@.+$/');
+    tokenizes(text);
+  });
+
+  test('full tool description — deeply nested — tokenizes cleanly', () => {
+    const s = new Sequence();
+    s.impls.set('search', (_i: unknown) => ({ hits: [] }));
+    s.insert({
+      path: 'api.search',
+      type: createType('fn', [
+        param(createType('object', [
+          property('query', createType('string')),
+          property('filters', createType('object', [
+            property('tag', createType('string'), true),
+            property('limit', createType('number'), true),
+          ]), true),
+        ])),
+        returns(createType('object', [
+          property('hits', createType('array', [
+            { op: 'element', args: [createType('object', [
+              property('id', createType('string')),
+              property('score', createType('number')),
+            ])] },
+          ])),
+        ])),
+        impl('search'),
+      ]),
+    });
+    installReader(s, 'api', { source: 'api.search' });
+    const { text } = hoistForReader(s, 'api');
+    // The whole surface round-trips as one chunk
+    expect(text).toContain('query: string');
+    expect(text).toContain('tag?: string');
+    expect(text).toContain('score: number');
+    tokenizes(text);
   });
 });
 

@@ -70,9 +70,14 @@ export type Cell = {
 
 export type Delta = {
   path: string;
-  kind: 'none' | 'value' | 'type' | 'invocation' | 'retraction';
+  kind: 'none' | 'value' | 'type' | 'invocation' | 'retraction' | 'access';
   prev?: unknown;
   next?: unknown;
+  /** For kind='access' only: hit means cell.value was present at read
+   *  time; miss means the cell was absent OR type-only. The consumer's
+   *  context class (if any) classifies the read for posterior keying. */
+  accessKind?: 'hit' | 'miss';
+  contextClass?: string;
 };
 
 /** A declarative rule. All feature logic lives in rules + their
@@ -80,7 +85,10 @@ export type Delta = {
  *  runtime functions (not persisted, re-registered on boot). */
 export type Rule = {
   id: string;
-  phase: 'admission' | 'observation';
+  /** admission: pre-compose gate on insert.
+   *  observation: post-compose, fires during propagate on write deltas.
+   *  access: fires on get() — a read event, not a write. */
+  phase: 'admission' | 'observation' | 'access';
   /** Path prefix this rule applies to (empty = global). */
   scope: string;
   /** Optional guard constraint evaluated against cell + delta + block. */
@@ -88,8 +96,8 @@ export type Rule = {
   /** Optional glob-prefix patterns; any cell change under a watched
    *  prefix triggers the rule even if the cell is outside `scope`. */
   watching?: string[];
-  /** Required for observation rules — id of an emitter registered on
-   *  `seq.emitters`. */
+  /** Required for observation and access rules — id of an emitter
+   *  registered on `seq.emitters`. */
   emit?: string;
 };
 
@@ -118,6 +126,10 @@ export type BlockTemplate = {
    *  emitters express "fire X when condition Y becomes true." */
   where?: Constraint[];
   author?: string;
+  /** Emit op. Default 'narrow'. Set to 'invalidate' when the template
+   *  should clear the cell (delete-shaped semantics for index_spec
+   *  bodies, HolderRelease, etc.). */
+  op?: 'narrow' | 'invalidate';
 };
 
 export type GuardOp = (
@@ -160,6 +172,13 @@ export class Sequence {
   private watchers = new Map<string, Set<string>>();
   /** All installed rules by id — for watcher dispatch lookup. */
   private rulesById = new Map<string, Rule>();
+  /** Re-entrancy guard for access dispatch. Prevents recursive access
+   *  events when an access-rule emitter reads cells while running. */
+  private accessInFlight = false;
+  /** Per-path guard for auto-expand on get(). Prevents cycles (Y derives
+   *  from X derives from Y) while still allowing chained expansion
+   *  through distinct paths. */
+  private expandInProgress = new Set<string>();
 
   /** Runtime-only registries (not serializable; re-registered on boot). */
   readonly impls = new Map<string, Function>();
@@ -193,7 +212,40 @@ export class Sequence {
 
   // ─── public reads ─────────────────────────────────────────────────
 
-  get(path: string): unknown { return this.findCell(path)?.value; }
+  /**
+   * Read a cell's value. Fires an access event (Wire 2) and auto-expands
+   * on gap (Wire 1) — see below.
+   *
+   * ACCESS EVENT: dispatched to `phase:'access'` rules in scope + glob-
+   * watchers. Carries `accessKind:'hit'` when a value was present at
+   * read time, else `'miss'`. `contextClass` (if supplied) is threaded
+   * through for conditional-posterior keying. Re-entrant calls during
+   * dispatch (e.g. an emitter reading state while computing a posterior
+   * update) do NOT fire further access events — guarded by
+   * `accessInFlight` to prevent loops.
+   *
+   * AUTO-EXPAND ON GAP: if the cell has a type but no value AND the
+   * type declares a local producer — currently a `derived(fnId, ...src)`
+   * constraint — computeDerived is invoked and its output mounted in a
+   * fresh step. `get()` then returns the now-materialized value.
+   *
+   * Per-path `expandInProgress` guards against cycles (Y→X→Y). Cells
+   * whose type declares NO local producer — "claim slots" that an
+   * external actor is responsible for filling — remain undefined. The
+   * access-miss event still fires, so a reader/UI/peer can route
+   * solicitation through normal observation rules.
+   */
+  get(path: string, contextClass?: string): unknown {
+    const cell = this.findCell(path);
+    const hit = cell?.value !== undefined;
+    if (!this.accessInFlight) this.fireAccess(path, cell, hit, contextClass);
+    if (!hit && cell?.type && !this.expandInProgress.has(path)) {
+      this.expandInProgress.add(path);
+      try { this.tryAutoExpand(cell); }
+      finally { this.expandInProgress.delete(path); }
+    }
+    return cell?.value;
+  }
   typeAt(path: string): Type | undefined { return this.findCell(path)?.type; }
   cells(): Cell[] { const out: Cell[] = []; walk(this.root, c => out.push(c)); return out; }
 
@@ -406,7 +458,7 @@ export class Sequence {
       const induced: Block = {
         seq: this.nextSeq++,
         coord: { path: t.path },
-        op: 'narrow',
+        op: t.op ?? 'narrow',
         value: t.value,
         type: t.type,
         rules: t.rules,
@@ -418,6 +470,120 @@ export class Sequence {
       };
       this.step(induced, frame, changes);
     }
+  }
+
+  /**
+   * Fire an access event for a `get()` call. Dispatches `phase:'access'`
+   * rules in lexical scope (collected by read-only traversal — never
+   * creates cells) plus glob-watcher access rules. The synthesized Delta
+   * has `kind:'access'` with `accessKind` in {`hit`,`miss`} and the
+   * caller's `contextClass` threaded through for posterior keying.
+   *
+   * Emitters of access rules may insert new blocks (e.g. update a
+   * per-cell access posterior at _holders.{path}.access.{alpha,beta}).
+   * Those inserts flow through the normal cascade. Any `seq.get()`
+   * inside that cascade is short-circuited from firing further access
+   * events by the `accessInFlight` guard — this prevents recursive
+   * dispatch loops without suppressing the inserts themselves.
+   */
+  private fireAccess(
+    path: string,
+    cell: Cell | undefined,
+    hit: boolean,
+    contextClass: string | undefined,
+  ): void {
+    this.accessInFlight = true;
+    try {
+      const { rulesInScope } = this.traverseReadOnly(path);
+      const accessDelta: Delta = {
+        path,
+        kind: 'access',
+        next: hit ? cell?.value : undefined,
+        accessKind: hit ? 'hit' : 'miss',
+        contextClass,
+      };
+      const block: Block = {
+        seq: this.nextSeq++,
+        coord: { path },
+        op: 'narrow',
+        time: this.clock(),
+        status: 'applied',
+      };
+      const frame: Frame = {
+        cell: cell ?? this.root,
+        rulesInScope,
+        depth: 0,
+        seen: new Set(),
+      };
+      const changes: Delta[] = [];
+
+      for (const r of rulesInScope) {
+        if (r.phase !== 'access') continue;
+        if (!scopeMatches(r, path)) continue;
+        this.dispatchRule(r, frame, accessDelta, block, changes);
+      }
+
+      const parts = path ? path.split('.') : [];
+      const seenRules = new Set<string>();
+      for (let i = 0; i <= parts.length; i++) {
+        const prefix = i === 0 ? '' : parts.slice(0, i).join('.');
+        const ruleIds = this.watchers.get(prefix);
+        if (!ruleIds) continue;
+        for (const rid of ruleIds) {
+          if (seenRules.has(rid)) continue;
+          seenRules.add(rid);
+          const r = this.rulesById.get(rid);
+          if (!r || r.phase !== 'access') continue;
+          this.dispatchRule(r, frame, accessDelta, block, changes);
+        }
+      }
+    } finally {
+      this.accessInFlight = false;
+    }
+  }
+
+  /** Walk to a path collecting in-scope rules WITHOUT creating cells.
+   *  Used by `fireAccess` so reads don't instantiate cells that aren't
+   *  already mounted (preserves `get()`'s existing non-creation semantic). */
+  private traverseReadOnly(path: string): { cell: Cell | undefined; rulesInScope: Rule[] } {
+    const segs = path ? path.split('.') : [];
+    let cell: Cell | undefined = this.root;
+    const rulesInScope: Rule[] = [...this.root.rules];
+    for (const seg of segs) {
+      cell = cell?.children.get(seg);
+      if (!cell) return { cell: undefined, rulesInScope };
+      if (cell.rules.length) rulesInScope.push(...cell.rules);
+    }
+    return { cell, rulesInScope };
+  }
+
+  /**
+   * Wire 1 — auto-expand a gap cell on read.
+   *
+   * Called from `get()` when a cell has a type but no value. Examines
+   * the type for a LOCAL PRODUCER and runs it:
+   *
+   *   - `derived(fnId, ...srcPaths)` constraint → `computeDerived` + step.
+   *
+   * Future extensions (fn-kind tool cells, ref-chain-to-derivable,
+   * peer-expand-via) can be added here without touching `get()`.
+   *
+   * Cells with a type but NO local producer — "claim slots" awaiting an
+   * external actor — return without action. `get()` returns undefined.
+   * The access-miss observation has already fired; that's the signal a
+   * reader/UI/peer can route through normal rule dispatch.
+   */
+  private tryAutoExpand(cell: Cell): void {
+    const t = cell.type;
+    if (!t) return;
+    // Derived constraint: a local producer that was declared on the type.
+    const derived = t.constraints.find(c => c.op === 'derived');
+    if (derived) {
+      const block = this.computeDerived(cell.path);
+      if (block) this.step(block, null, []);
+      return;
+    }
+    // No local producer discoverable → claim slot. No expansion.
   }
 
   private computeDerived(targetPath: string): Block | null {

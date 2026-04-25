@@ -169,6 +169,225 @@ describe('observation rules', () => {
   });
 });
 
+describe('access rules (Wire 2)', () => {
+  test('get() on a valued cell fires access rule with accessKind=hit', () => {
+    const s = new Sequence();
+    const events: Array<{ path: string; kind: string; val: unknown }> = [];
+    s.emitters.set('track', (ctx) => {
+      events.push({ path: ctx.delta.path, kind: ctx.delta.accessKind!, val: ctx.delta.next });
+      return [];
+    });
+    s.insert({
+      path: '_rules.track',
+      rules: [{ id: 'track', phase: 'access', scope: 'x', emit: 'track' }],
+    });
+    s.insert({ path: 'x', value: 42 });
+    expect(s.get('x')).toBe(42);
+    expect(events).toEqual([{ path: 'x', kind: 'hit', val: 42 }]);
+  });
+
+  test('get() on a type-only cell fires access rule with accessKind=miss', () => {
+    const s = new Sequence();
+    const events: Array<{ path: string; kind: string }> = [];
+    s.emitters.set('track', (ctx) => {
+      events.push({ path: ctx.delta.path, kind: ctx.delta.accessKind! });
+      return [];
+    });
+    s.insert({
+      path: '_rules.track',
+      rules: [{ id: 'track', phase: 'access', scope: 'slot', emit: 'track' }],
+    });
+    s.insert({ path: 'slot', type: createType('string') });
+    expect(s.get('slot')).toBeUndefined();
+    expect(events).toEqual([{ path: 'slot', kind: 'miss' }]);
+  });
+
+  test('get() on a never-mounted path fires access-miss via glob-watcher', () => {
+    const s = new Sequence();
+    let miss = 0;
+    s.emitters.set('count', (ctx) => {
+      if (ctx.delta.accessKind === 'miss') miss++;
+      return [];
+    });
+    s.insert({
+      path: '_rules.count',
+      rules: [{ id: 'count', phase: 'access', scope: 'nowhere_else', watching: ['any'], emit: 'count' }],
+    });
+    expect(s.get('any.ghost')).toBeUndefined();
+    expect(miss).toBe(1);
+  });
+
+  test('contextClass threads through to the access delta', () => {
+    const s = new Sequence();
+    const ctxs: Array<string | undefined> = [];
+    s.emitters.set('capture', (ctx) => {
+      ctxs.push(ctx.delta.contextClass);
+      return [];
+    });
+    s.insert({
+      path: '_rules.capture',
+      rules: [{ id: 'capture', phase: 'access', scope: 'y', emit: 'capture' }],
+    });
+    s.insert({ path: 'y', value: 1 });
+    s.get('y');
+    s.get('y', 'render');
+    s.get('y', 'plan');
+    expect(ctxs).toEqual([undefined, 'render', 'plan']);
+  });
+
+  test('access rule emitter can insert follow-up state (posterior update)', () => {
+    const s = new Sequence();
+    s.emitters.set('bump', (ctx) => [
+      { path: `_access.${ctx.delta.path}.count`,
+        value: ((s.get(`_access.${ctx.delta.path}.count`) as number) ?? 0) + 1 },
+    ]);
+    s.insert({
+      path: '_rules.bump',
+      rules: [{ id: 'bump', phase: 'access', scope: 'z', emit: 'bump' }],
+    });
+    s.insert({ path: 'z', value: 'hello' });
+    s.get('z');
+    s.get('z');
+    s.get('z');
+    expect(s.get('_access.z.count')).toBe(3);
+  });
+
+  test('re-entrancy guard: access rule reading another cell does not fire more access events', () => {
+    const s = new Sequence();
+    let fires = 0;
+    s.emitters.set('e', () => {
+      fires++;
+      s.get('other');  // inside emitter — would loop without the guard
+      return [];
+    });
+    s.insert({
+      path: '_rules.e',
+      rules: [{ id: 'e', phase: 'access', scope: 'a', emit: 'e' }],
+    });
+    s.insert({ path: 'a', value: 1 });
+    s.insert({ path: 'other', value: 2 });
+    s.get('a');
+    expect(fires).toBe(1);
+  });
+
+  test('access rules do NOT fire on write-delta cascades (only on get)', () => {
+    const s = new Sequence();
+    let fires = 0;
+    s.emitters.set('e', () => { fires++; return []; });
+    s.insert({
+      path: '_rules.e',
+      rules: [{ id: 'e', phase: 'access', scope: 'w', emit: 'e' }],
+    });
+    s.insert({ path: 'w', value: 'first' });
+    s.insert({ path: 'w', value: 'second' });
+    expect(fires).toBe(0);  // writes don't trigger access
+    s.get('w');
+    expect(fires).toBe(1);
+  });
+
+  test('observation rules do NOT fire on access events', () => {
+    const s = new Sequence();
+    let obsFires = 0;
+    s.emitters.set('obs', () => { obsFires++; return []; });
+    s.insert({
+      path: '_rules.obs',
+      rules: [{ id: 'obs', phase: 'observation', scope: 'x', emit: 'obs' }],
+    });
+    s.insert({ path: 'x', value: 'a' });
+    const before = obsFires;
+    s.get('x');
+    s.get('x');
+    expect(obsFires).toBe(before);  // no observation rule invocations from reads
+  });
+});
+
+describe('gap auto-expand on get (Wire 1)', () => {
+  test('derived cell declared AFTER source is set: get() auto-computes', () => {
+    const s = new Sequence();
+    s.impls.set('doubler', (n: number) => n * 2);
+    s.insert({ path: 'x', value: 5 });
+    s.insert({ path: 'y', type: createType('number', [derived('doubler', 'x')]) });
+    // Before Wire 1 this would be undefined (no cascade fired for y).
+    expect(s.get('y')).toBe(10);
+  });
+
+  test('chain: Z derives from Y derives from X (sources set first)', () => {
+    const s = new Sequence();
+    s.impls.set('inc', (n: number) => n + 1);
+    s.impls.set('double', (n: number) => n * 2);
+    s.insert({ path: 'x', value: 3 });
+    s.insert({ path: 'y', type: createType('number', [derived('inc', 'x')]) });
+    s.insert({ path: 'z', type: createType('number', [derived('double', 'y')]) });
+    // Reading z triggers y's expand (reads x), then z's expand (reads y).
+    expect(s.get('z')).toBe(8);  // (3+1)*2
+  });
+
+  test('claim slot (type only, no derived constraint) stays undefined on get', () => {
+    const s = new Sequence();
+    s.insert({ path: 'slot', type: createType('string') });
+    expect(s.get('slot')).toBeUndefined();
+    // Cell still type-only — no value was invented.
+    expect(s.getCell('slot')?.value).toBeUndefined();
+    expect(s.getCell('slot')?.type?.kind).toBe('string');
+  });
+
+  test('derived cell with missing source returns undefined (no throw)', () => {
+    const s = new Sequence();
+    s.impls.set('doubler', (n: number) => n * 2);
+    s.insert({ path: 'y', type: createType('number', [derived('doubler', 'x')]) });
+    // x is never set. y can't materialize. Return undefined, don't throw.
+    expect(() => s.get('y')).not.toThrow();
+    expect(s.get('y')).toBeUndefined();
+  });
+
+  test('self-referential derivation does not infinite-loop on get', () => {
+    const s = new Sequence();
+    s.impls.set('id', (n: number) => n);
+    s.insert({ path: 'x', type: createType('number', [derived('id', 'x')]) });
+    // Cycle: x derives from x. Guard must prevent infinite recursion.
+    expect(() => s.get('x')).not.toThrow();
+    expect(s.get('x')).toBeUndefined();
+  });
+
+  test('mutual cycle Y→X→Y does not infinite-loop on get', () => {
+    const s = new Sequence();
+    s.impls.set('id', (n: number) => n);
+    s.insert({ path: 'y', type: createType('number', [derived('id', 'x')]) });
+    s.insert({ path: 'x', type: createType('number', [derived('id', 'y')]) });
+    expect(() => s.get('y')).not.toThrow();
+    expect(s.get('y')).toBeUndefined();
+    expect(s.get('x')).toBeUndefined();
+  });
+
+  test('auto-expanded value persists: second get is a hit, not another expand', () => {
+    const s = new Sequence();
+    let calls = 0;
+    s.impls.set('countingDoubler', (n: number) => { calls++; return n * 2; });
+    s.insert({ path: 'x', value: 7 });
+    s.insert({ path: 'y', type: createType('number', [derived('countingDoubler', 'x')]) });
+    expect(s.get('y')).toBe(14);
+    expect(s.get('y')).toBe(14);
+    expect(s.get('y')).toBe(14);
+    expect(calls).toBe(1);  // expand ran once; subsequent gets are cached hits
+  });
+
+  test('access-miss observation still fires for claim slots with no local producer', () => {
+    const s = new Sequence();
+    let misses = 0;
+    s.emitters.set('m', (ctx) => {
+      if (ctx.delta.accessKind === 'miss') misses++;
+      return [];
+    });
+    s.insert({
+      path: '_rules.m',
+      rules: [{ id: 'm', phase: 'access', scope: 'slot', emit: 'm' }],
+    });
+    s.insert({ path: 'slot', type: createType('string') });
+    s.get('slot');
+    expect(misses).toBe(1);
+  });
+});
+
 describe('cycle + fixpoint', () => {
   test('self-referential derivation terminates', () => {
     const s = new Sequence();
