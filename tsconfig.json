@@ -2,13 +2,12 @@
   "compilerOptions": {
     "target": "ES2022",
     "module": "ES2022",
-    "moduleResolution": "node",
+    "moduleResolution": "bundler",
     "lib": ["ES2022"],
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
     "outDir": "dist",
-    "rootDir": "src",
     "strict": false,
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
@@ -16,6 +15,14 @@
     "resolveJsonModule": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "dist", "src/test"]
+  "include": ["src/**/*.ts", "src-v2/**/*.ts"],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "src-v2/env/browser-storage.ts",
+    "src-v2/examples",
+    "src-v2/examples/**/*",
+    "src-v2/test",
+    "src-v2/test/**/*"
+  ]
 }

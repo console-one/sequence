@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "exclude": [
+    "node_modules",
+    "dist",
+    "src/test",
+    "src/test/**/*",
+    "src-v2/test",
+    "src-v2/test/**/*",
+    "src-v2/examples",
+    "src-v2/examples/**/*",
+    "src-v2/env/browser-storage.ts"
+  ]
+}
