@@ -455,6 +455,49 @@ describe('ft text → Sequence (end-to-end)', () => {
     expect(seq.get('worker.heartbeat')).toBe(42);
   });
 
+  test('narrow with block-RHS dispatches per-binding operator at sub-paths', () => {
+    const seq = new Sequence();
+    receive('worker.heartbeat = number', seq);
+    receive('worker.livenessWindow = number', seq);
+    // Block RHS: each inner statement carries its own operator.
+    // `<<` at inner narrows; `=` at inner assigns.
+    receive('worker << { heartbeat << 42; livenessWindow = 5000 }', seq);
+    expect(seq.get('worker.heartbeat')).toBe(42);
+    expect(seq.get('worker.livenessWindow')).toBe(5000);
+  });
+
+  test('numeric << is += (delta), not literal narrow', () => {
+    const seq = new Sequence();
+    receive('count = number', seq);
+    receive('count << 3', seq);
+    expect(seq.get('count')).toBe(3);
+    receive('count << 5', seq);
+    expect(seq.get('count')).toBe(8);
+    receive('count << 2', seq);
+    expect(seq.get('count')).toBe(10);
+  });
+
+  test('numeric delta inside block-RHS sums per leaf', () => {
+    const seq = new Sequence();
+    receive('stats.calls = number', seq);
+    receive('stats.tokens = number', seq);
+    receive('stats << { calls << 1; tokens << 100 }', seq);
+    receive('stats << { calls << 1; tokens << 250 }', seq);
+    expect(seq.get('stats.calls')).toBe(2);
+    expect(seq.get('stats.tokens')).toBe(350);
+  });
+
+  test('narrow with nested block-RHS recurses through sub-paths', () => {
+    const seq = new Sequence();
+    receive('app.worker.heartbeat = number', seq);
+    receive('app.worker.livenessWindow = number', seq);
+    receive('app.config.host = string', seq);
+    receive('app << { worker << { heartbeat << 42; livenessWindow = 5000 }; config << { host = "localhost" } }', seq);
+    expect(seq.get('app.worker.heartbeat')).toBe(42);
+    expect(seq.get('app.worker.livenessWindow')).toBe(5000);
+    expect(seq.get('app.config.host')).toBe('localhost');
+  });
+
   test('policy mount', () => {
     const seq = new Sequence();
     receive('policy audit: { compact: "preserve" }', seq);

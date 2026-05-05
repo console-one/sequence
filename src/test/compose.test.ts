@@ -8,7 +8,7 @@
 
 import { FT } from '../builder';
 import { compose, covers, typeSpecificity, backwardInfer, evaluateExpr, exprConcreteness, check, selectFirstBranch } from '../compose';
-import { createType, isNever, isAny, literalValue, properties, ANY, add, mul, call, pm, type Expr } from '../type';
+import { createType, isNever, isAny, literalValue, properties, ANY, add, mul, call, pm, type Expr, Type } from '../type';
 
 describe('compose — lattice meet', () => {
 
@@ -272,8 +272,13 @@ describe('backwardInfer — derive input from required output', () => {
   test('preserves(*) — non-effect properties traced to input', () => {
     // addStatus: T → T & { status: 'done' }
     const fn = FT.fn({
+      
       input: FT.object({ id: FT.string() }),
-      output: FT.object({ id: FT.string(), status: FT.string('done') }),
+
+      output: FT.object({ 
+        id: FT.string(), 
+        status: FT.string('done') 
+      }),
       preserves: '*',
     });
     // Require: { status: 'done', name: string }

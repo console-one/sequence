@@ -13,9 +13,11 @@ import {
   installCommitment,
   installReliability,
   installPosteriorAdmit,
+  installLimit,
   installIndexSpec,
   installStdLib,
   posteriorAdmit,
+  limit,
   flushPending,
   advanceClock,
   installReader,
@@ -227,6 +229,137 @@ describe('stdlib: posteriorAdmit', () => {
     const r = s.insert({ path: 'tool', value: 99 });
     expect(r.suspended).toBe(false);
     expect(s.get('tool.result')).toBe(198);
+  });
+});
+
+// ═══ Limit (substrate-native rate-limit primitive — replaces guardrail's
+//      LimitBuilder.toLessThan(N).per(...) pattern) ═══
+
+describe('stdlib: limit', () => {
+  // Helper: bump a meter cell by `delta`. The substrate composes value
+  // writes as overwrite (last-writer-wins on the value slot), so the
+  // pattern is read-then-write — same shape callers would use to
+  // increment a Welford count or any other running tally.
+  const bump = (s: Sequence, path: string, delta: number) => {
+    const cur = (s.get(path) as number) ?? 0;
+    s.insert({ path, value: cur + delta });
+  };
+
+  test('admits while meter + delta ≤ max, rejects once it would cross', () => {
+    const s = new Sequence();
+    installCommitment(s);
+    installLimit(s);
+    s.impls.set('publish', () => 'ok');
+    s.insert({
+      path: 'tool',
+      type: createType('fn', [
+        param(createType('any')),
+        returns(createType('any')),
+        impl('publish'),
+      ]),
+    });
+
+    // The publisher's meter for this user/window. A regular numeric cell
+    // — no special install, just declare the path holds a number.
+    const meterPath = '_meters.calls.alice.0';
+    s.insert({ path: meterPath, value: 0 });
+
+    // Admission rule: gate `tool` invocations on the meter not exceeding 3.
+    s.insert({
+      path: '_rules.publish_quota',
+      rules: [{
+        id: 'publish_quota',
+        phase: 'admission',
+        scope: 'tool',
+        when: limit(meterPath, 3),
+      }],
+    });
+
+    // Three invocations admit; bump the meter after each successful admit.
+    for (let i = 0; i < 3; i++) {
+      const r = s.insert({ path: 'tool', value: i });
+      expect(r.suspended).toBe(false);
+      bump(s, meterPath, 1);
+    }
+    expect(s.get(meterPath)).toBe(3);
+
+    // Fourth would put meter+1 = 4 > 3 → rejected.
+    const r = s.insert({ path: 'tool', value: 99 });
+    expect(r.suspended).toBe(true);
+  });
+
+  test('partition is just the path — different users = different cells', () => {
+    const s = new Sequence();
+    installCommitment(s);
+    installLimit(s);
+    s.impls.set('publish', () => 'ok');
+    s.insert({
+      path: 'tool',
+      type: createType('fn', [
+        param(createType('any')),
+        returns(createType('any')),
+        impl('publish'),
+      ]),
+    });
+
+    const meterAlice = '_meters.calls.alice.0';
+    s.insert({ path: meterAlice, value: 2 }); // already at quota
+
+    // Same limit constructor, scoped just to alice's meter.
+    s.insert({
+      path: '_rules.publish_quota_alice',
+      rules: [{
+        id: 'publish_quota_alice',
+        phase: 'admission',
+        scope: 'tool',
+        when: limit(meterAlice, 2),
+      }],
+    });
+
+    // alice's meter is 2 → 2+1 = 3 > 2 → suspended.
+    const r = s.insert({ path: 'tool', value: 1 });
+    expect(r.suspended).toBe(true);
+  });
+
+  test('inflight singleton: ±1 paired deltas net to zero, gate releases', () => {
+    const s = new Sequence();
+    installCommitment(s);
+    installLimit(s);
+    s.impls.set('publish', () => 'ok');
+    s.insert({
+      path: 'tool',
+      type: createType('fn', [
+        param(createType('any')),
+        returns(createType('any')),
+        impl('publish'),
+      ]),
+    });
+
+    const inflightPath = '_meters.inflight.alice';
+    s.insert({ path: inflightPath, value: 0 });
+    s.insert({
+      path: '_rules.publish_singleton',
+      rules: [{
+        id: 'publish_singleton',
+        phase: 'admission',
+        scope: 'tool',
+        when: limit(inflightPath, 1),
+      }],
+    });
+
+    // First admit, mark inflight.
+    expect(s.insert({ path: 'tool', value: 1 }).suspended).toBe(false);
+    bump(s, inflightPath, +1);
+
+    // Second admit blocked while inflight = 1 (1+1 = 2 > 1).
+    expect(s.insert({ path: 'tool', value: 2 }).suspended).toBe(true);
+
+    // Release the slot via -1; meter back to 0.
+    bump(s, inflightPath, -1);
+    expect(s.get(inflightPath)).toBe(0);
+
+    // Now admits again.
+    expect(s.insert({ path: 'tool', value: 3 }).suspended).toBe(false);
   });
 });
 

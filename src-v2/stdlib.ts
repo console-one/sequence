@@ -2494,6 +2494,38 @@ export function posteriorAdmit(base: string, threshold = 0.5): Constraint {
   return { op: 'posteriorAdmit', args: [base, threshold] };
 }
 
+/**
+ * Constructor for the `limit` admission predicate. Use as a `when` clause
+ * on admission rules:
+ *
+ *   s.insert({
+ *     path: '_rules.publish_quota',
+ *     rules: [{
+ *       id: 'publish_quota',
+ *       phase: 'admission',
+ *       scope: 'publish_request',
+ *       when: limit('_meters.calls.alice.<window>', 50),
+ *     }],
+ *   });
+ *
+ * Admits while `(seq.get(meterPath) ?? 0) + delta < limit`. Pair with
+ * `<<` writes to the meter cell at admission/completion lifecycle points
+ * to compose calls / tokens / in-flight singleton / bytes / etc. — same
+ * primitive at every scale.
+ */
+export function limit(meterPath: string, max: number, delta = 1): Constraint {
+  return { op: 'limit', args: [meterPath, max, delta] };
+}
+
+/**
+ * Constructor for `meterAt` — declares "this rule cares about the meter
+ * at X." No admission impact; used to wire dependency-graph edges
+ * cleanly when a rule's body needs the meter value but doesn't gate on it.
+ */
+export function meterAt(meterPath: string): Constraint {
+  return { op: 'meterAt', args: [meterPath] };
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // INDEXSPEC — tuple-product rule driver.
 //
@@ -2742,6 +2774,59 @@ export function installPosteriorAdmit(seq: Sequence): void {
   });
 }
 
+/**
+ * Install the `limit` guard — admission predicate over a numeric meter
+ * cell. This is the substrate-native replacement for guardrail's
+ * `LimitBuilder.toLessThan(N).per(...)` pattern: the meter is just a
+ * cell at a known path, increments are delta-applied via `<<`, and the
+ * limit guard reads that cell at write time.
+ *
+ *   Constraint shape: `{ op: 'limit', args: [meterPath, limit, delta?] }`
+ *   - meterPath: cell path holding the running counter (number; default 0)
+ *   - limit: max value allowed AFTER admitting this delta (strict <)
+ *   - delta: contribution of this admission (default 1)
+ *
+ *   Admits when `(current ?? 0) + delta < limit`.
+ *
+ * Partition keys are encoded into the path by the caller — e.g.
+ * `_meters.calls.${user}.${windowStartMs}`. The substrate doesn't need a
+ * separate partition concept because cell paths are already
+ * tree-structured. Per-window resets aren't needed: a fresh path per
+ * window means stale partitions just stop being read.
+ *
+ * This guard is the building block; admission lifecycles (commit on
+ * success, refund on reject, +/- delta pairs for in-flight singletons)
+ * compose by writing to the meter with `<<` deltas at the right
+ * lifecycle points.
+ */
+export function installLimit(seq: Sequence): void {
+  seq.guards.set('limit', (c, s) => {
+    const meterPath = c.args[0] as string;
+    const max = c.args[1] as number;
+    const delta = (c.args[2] as number) ?? 1;
+    const current = (s.get(meterPath) as number) ?? 0;
+    return current + delta <= max;
+  });
+}
+
+/**
+ * Install the `meter` guard — read-only inspection of a numeric meter
+ * with no admission semantics. Useful for posteriors and observability
+ * surfaces that need the current value without re-deriving it.
+ *
+ *   Constraint shape: `{ op: 'meterAt', args: [meterPath] }`
+ *   - meterPath: cell path holding the running counter
+ *
+ *   Always returns true (no admission impact); side effect is the read.
+ *
+ * Mostly here so a sequence consumer can declare "this rule cares about
+ * the meter at X" in a way the substrate's depend-on graph picks up
+ * without needing a custom op.
+ */
+export function installMeterAt(seq: Sequence): void {
+  seq.guards.set('meterAt', () => true);
+}
+
 export function installIndexSpec(seq: Sequence): void {
   seq.emitters.set('indexSpec.tick', indexSpecDriver);
   seq.insert({
@@ -2761,6 +2846,8 @@ export function installStdLib(seq: Sequence): void {
   installCommitment(seq);
   installReliability(seq);
   installPosteriorAdmit(seq);
+  installLimit(seq);
+  installMeterAt(seq);
   installIndexSpec(seq);
   installRefinement(seq);
 }

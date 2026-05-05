@@ -27,11 +27,7 @@ describe('bind with fn value registers impl (tool-op collapse Phase A)', () => {
     const seq = new Sequence();
     seq.mount('schema', 'fs.read', mkFnSchema());
     const impl = (_input: unknown) => ({ content: 'hello' });
-
     seq.mount('bind', 'fs.read', impl);
-
-    // The tool is visible in the `_tools` index and in
-    // `projection.tools`, exactly like a tool mount would have.
     expect(seq.projection.tools.has('fs.read')).toBe(true);
     const tools = seq.get('_tools') as string[];
     expect(tools).toContain('fs.read');

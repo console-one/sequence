@@ -763,6 +763,9 @@ export class Sequence {
     }
   }
 
+  // NOTE: does this return all types or all values? 
+  // if it returns all types - then why are only types stored in proj. 
+  // if it returns types and values - then why is it named iterateTypes? 
   private *_iterateTypes(): Generator<[string, Type]> {
     for (const [path, id] of this.proj.pathIndex) {
       const cell = this.proj.cells.get(id);
@@ -952,12 +955,14 @@ export class Sequence {
 
   // ═══ MOUNT — the single operation ═════════════════════════════════
 
+
   mount(
     opOrEntries: string | MountEntry[],
     pathOrOpts?: string | BlockOpts,
     value?: unknown,
     opts?: BlockOpts,
   ): MountResult {
+
     let entries: MountEntry[];
     let blockOpts: BlockOpts | undefined;
     if (typeof opOrEntries === 'string') {
@@ -997,10 +1002,12 @@ export class Sequence {
     const schemaFor = (path: string): Type | undefined => this._typeOf(path);
     const partitionAt = (path: string, explicitType?: Type): Partition =>
       partitionOf(path, explicitType ?? schemaFor(path));
+
     for (const entry of entries) {
       const entryType = entry.op === 'schema' ? (entry.value as Type | undefined) : undefined;
       const entryPartition = partitionAt(entry.path, entryType);
       // Schema entries: check ref and derived constraint targets
+      
       if (entry.op === 'schema' && entry.value) {
         const type = entry.value as Type;
         for (const c of type.constraints) {
@@ -1023,6 +1030,7 @@ export class Sequence {
         }
       }
     }
+
     // Block-level constraints: where/while paths must be reachable from every entry's partition
     if (blockOpts?.where || blockOpts?.while) {
       const constraintPaths = new Set<string>();
@@ -1040,6 +1048,7 @@ export class Sequence {
         }
       }
     }
+
     if (partitionErrors.length > 0) {
       const block: Block = { seq: blockSeq, time, entries, ...blockOpts, status: 'suspended' };
       this.blocks.push(block);
@@ -2197,6 +2206,8 @@ export class Sequence {
     if (own) {
       // Exact-path schema with a ref — follow it to get the real
       // type. Same contract as get(): the ref dereferences.
+      // NOTE: what is the significance of matching the first 'ref' 
+      // type at all? This seems arbitrary.
       const rc = constraintOf(own, 'ref');
       if (rc) return this._typeAtRaw(rc.args[0] as string, visited);
       return own;
@@ -2210,6 +2221,7 @@ export class Sequence {
     //       This is what makes install-via-ref work for types —
     //       typeAt returns the template's fn schema when asked for
     //       an installed invocation's type.
+    // 
     const parts = path.split('.');
     for (let i = parts.length - 1; i >= 1; i--) {
       const parentPath = parts.slice(0, i).join('.');
@@ -3334,9 +3346,14 @@ export class Sequence {
         // Dependent bindings: if the globPath contains `{var}`
         // references, interpolate them per-tuple before resolving.
         for (const tuple of tuples) {
+
+          // NOTE: potentially a security risk to use arbitrary parsing to convert 
+          // the underlying data model to well formed AST nodes
           const concretePath = globPath.includes('{')
             ? this.interpolatePath(globPath, tuple)
             : globPath;
+
+
           if (concretePath.endsWith('.*')) {
             // Glob: bind var to each key matched by the pattern.
             // Simple trailing wildcard (`chan.users.alice.*`): use
@@ -3346,8 +3363,12 @@ export class Sequence {
             // FULL path becomes a tuple. Promotion uses the
             // interior form by binding to a field containing a
             // pattern string.
+
+            // NOTE: magic-string pattern; no reified syntax rules
+            // Ad-hoc runtime pattern matching. 
             const segments = concretePath.split('.');
             const starCount = segments.filter(s => s === '*').length;
+
             const hasInteriorStar = starCount > 1 ||
               (starCount === 1 && segments[segments.length - 1] !== '*');
             if (starCount === 1 && segments[segments.length - 1] === '*' && !hasInteriorStar) {
@@ -3364,6 +3385,7 @@ export class Sequence {
               for (const [valuePath] of this._iterateLeafValues()) {
                 if (valuePath.startsWith('_')) continue;
                 if (this.matchPathPattern(concretePath, valuePath)) {
+                  // TODO: where is the dedupe?
                   next.push({ ...tuple, [varName]: valuePath });
                 }
               }
@@ -3550,8 +3572,14 @@ export class Sequence {
       for (let pass = 0; pass < maxPasses; pass++) {
         const mutationsBefore = this.mutationCount;
         for (const [schemaPath, schema] of this._iterateTypes()) {
+
+          // NOTE: magic-string
+          // Why do we assume the constraint-type-to-object cardinality is 0..1:1? 
           const specConstraint = constraintOf(schema, 'index_spec');
+
           if (!specConstraint) continue;
+
+          // 
           const spec = specConstraint.args[0] as {
             indexedBy?: string[];
             where?: Constraint[];
@@ -3577,6 +3605,8 @@ export class Sequence {
             const keys = Object.keys(t).sort();
             return keys.map(k => `${k}=${JSON.stringify(t[k])}`).join('|');
           };
+
+          // NOTE: verify behavior when the where clause extends to off terms. 
           let tuples = this.evalBindings(spec.where ?? []);
           const seenTuples = new Set<string>();
           let i = 0;
@@ -3625,6 +3655,10 @@ export class Sequence {
   }
 
   /**
+   * 
+   * TODO: consider using a parser here, or at least
+   * abstract this logic out of this monolithic class.  
+   * 
    * Substitute `$var` references in a constraint tree with literal
    * wrappers. Distinct from `substituteVars` (used by `forall`):
    * forall substitutes strings for path-segment interpolation,
@@ -3635,6 +3669,7 @@ export class Sequence {
    */
   private static substituteLiterals(c: Constraint, bindings: Record<string, unknown>): Constraint {
     const subst = (a: unknown): unknown => {
+
       if (typeof a === 'string') {
         // Whole-string $var: produce a literal wrapper so the value
         // survives resolution as its original type.
@@ -3698,6 +3733,10 @@ export class Sequence {
   }
 
   /**
+   * TODO: consider applying a constraint re-routing 
+   * layer here. Presumably, this Binops can be applied to index shift
+   * constraints right? So what if LHS or RHS represent decision variables? 
+   * 
    * Shared binary-op reducer. Both `resolveExpr` (constraint filters)
    * and `interpolateValue` (index-class body values) use this to keep
    * arithmetic vocabulary and edge-case handling in one place: any
@@ -3716,6 +3755,9 @@ export class Sequence {
     return undefined;
   }
 
+  /**
+   * TODO: should we use a live conjugate re-routing layer here? 
+   */
   private evalConstraint(c: Constraint): boolean {
     /** Resolve arithmetic/aggregate expressions recursively. */
     const resolveExpr = (arg: unknown): unknown => {
@@ -3758,6 +3800,7 @@ export class Sequence {
       if (typeof arg === 'string') { const v = this.get(arg); return v !== undefined ? v : arg; }
       return arg;
     };
+
     switch (c.op) {
       // ── Original comparisons ──
       case 'eq': return Object.is(resolvePath(c.args[0]), resolveValue(c.args[1]));
@@ -3867,6 +3910,7 @@ export class Sequence {
         if (typeof v === 'string' && typeof lo === 'string' && typeof hi === 'string') return v >= lo && v <= hi;
         return false;
       }
+
       case 'one_of': {
         const v = resolvePath(c.args[0]);
         const values = c.args[1] as unknown[];

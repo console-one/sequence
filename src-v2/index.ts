@@ -32,6 +32,8 @@ export {
   installCommitment,
   installReliability,
   installPosteriorAdmit,
+  installLimit,
+  installMeterAt,
   installIndexSpec,
   installRefinement,
   installAccessPosterior,
@@ -73,9 +75,11 @@ export type {
   ConcretenessDistribution,
 } from './stdlib';
 
-// ─── Stdlib — posterior admission constraint constructor ────────────────
+// ─── Stdlib — admission constraint constructors ─────────────────────────
 export {
   posteriorAdmit,
+  limit,
+  meterAt,
 } from './stdlib';
 
 // ─── Stdlib — cross-sequence federation ─────────────────────────────────

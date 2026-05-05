@@ -294,7 +294,39 @@ export function walk(
       }
 
       case 'narrow': {
+        // Block-RHS: structural patch with per-binding operator dispatch.
+        // `a << { x << 3, y = 5 }` recurses each inner statement at the
+        // prefixed sub-path, preserving its own kind (narrow vs assign).
+        // No outer type compose — a block isn't a type, it's a patch shape.
+        if (stmt.value.kind === 'block') {
+          const inner: Statement[] = [];
+          for (const inStmt of stmt.value.statements) {
+            if (inStmt.kind === 'assign' || inStmt.kind === 'narrow') {
+              inner.push({ ...inStmt, path: `${stmt.path}.${(inStmt as any).path}` } as Statement);
+            }
+          }
+          const sub = walk(inner, seq, resolve, defaultOpts);
+          mounts.push(...sub.mounts);
+          comments.push(...sub.comments);
+          break;
+        }
+
         const opts = toOpts(stmt.modifiers);
+
+        // Numeric leaf delta: `count << 5` on a numeric path is +=, not type
+        // narrow. `<<` is monoid-meet at leaves; for numbers the meet is sum.
+        // Without this, `count << 3` then `count << 5` composes literal(3) with
+        // literal(5) → never, and the second narrow fails.
+        if (stmt.value.kind === 'literal' && typeof stmt.value.value === 'number') {
+          const existingType = seq.typeAt(stmt.path);
+          if (existingType && existingType.kind === 'number') {
+            const prior = seq.get(stmt.path);
+            const base = typeof prior === 'number' ? prior : 0;
+            mounts.push(seq.mount('bind', stmt.path, base + stmt.value.value, opts));
+            break;
+          }
+        }
+
         const newType = toType(stmt.value);
         const existing = seq.typeAt(stmt.path);
         if (existing) {
