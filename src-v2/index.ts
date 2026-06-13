@@ -21,6 +21,14 @@ export type {
   InsertInput, InsertResult,
 } from './sequence';
 
+// ─── Standalone constraint evaluation ───────────────────────────────────
+// Evaluate a serialized Constraint ({op, args} — the laws vocabulary)
+// against a plain state object + $var bindings, WITHOUT constructing a
+// Sequence. Relations delegate to the shared `check` machinery. The
+// entry point for consumers (e.g. topic-dao write conditions) that hold
+// folded state as a plain object.
+export { evaluateConstraint } from './evaluate';
+
 // ─── Stdlib installers ──────────────────────────────────────────────────
 // Each install* function mounts its rule(s) + registers its emitter(s) /
 // guard op(s) on the sequence. Idempotent; safe to call once at boot.
