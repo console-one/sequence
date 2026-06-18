@@ -26,7 +26,14 @@ import {
   cdf, survival, conjugateUpdate, posteriorPredictive,
   type DistParams,
 } from '../src/compose';
-import { createHmac, randomBytes, timingSafeEqual } from 'crypto';
+// DEFAULT import (not named): these are node-only auth helpers (HMAC session
+// tokens). A *named* `import { createHmac } from 'crypto'` hard-fails browser
+// bundlers (vite's node-builtin stub has no named exports), which dragged
+// node:crypto into every browser consumer of this kernel. A default import
+// builds everywhere — vite gives it a proxy that only throws IF accessed, and
+// the browser never calls these fns — while node sees the real module. Keeps
+// the kernel genuinely browser-safe with no signature/async change.
+import nodeCrypto from 'crypto';
 import type { IStorage } from './env/storage';
 import {
   type Sequence,
@@ -4207,7 +4214,7 @@ export type AuthValidationResult =
 /** Unit-separator-delimited canonicalization so `|` or newline in a
  *  username can't smuggle an alternate canonical form past HMAC. */
 function signAuthPayload(user: string, expiresAt: number, secret: string): string {
-  return createHmac('sha256', secret)
+  return nodeCrypto.createHmac('sha256', secret)
     .update(`${user}${expiresAt}`)
     .digest('hex');
 }
@@ -4252,7 +4259,7 @@ export function validateSessionToken(
   const expected = signAuthPayload(t.user, t.expiresAt, secret);
   let sigMatch = false;
   try {
-    sigMatch = timingSafeEqual(
+    sigMatch = nodeCrypto.timingSafeEqual(
       Buffer.from(t.signature, 'hex'),
       Buffer.from(expected, 'hex'),
     );
@@ -4266,7 +4273,7 @@ export function validateSessionToken(
 
 /** Fresh 64-byte (512-bit) random secret, hex-encoded. */
 export function generateTokenSecret(): string {
-  return randomBytes(64).toString('hex');
+  return nodeCrypto.randomBytes(64).toString('hex');
 }
 
 // ─── CAPABILITY WIRING ──────────────────────────────────────────────
