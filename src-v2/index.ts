@@ -29,6 +29,12 @@ export type {
 // folded state as a plain object.
 export { evaluateConstraint } from './evaluate';
 
+// ─── The budget/threshold relations (one definition, three tiers) ───────
+// withinMax = `number ∧ max(limit)` conformance; reachedMin = the dual.
+// Fail-closed on non-finite. Consumed by the desktop gate, the firing
+// laws, and the deployed topic-service admission gate.
+export { withinMax, reachedMin } from './relations';
+
 // ─── Standalone commitment election (S-B2 POSMDP / R8) ──────────────────
 // The decide-when election an actor runs at a decision epoch: one owed
 // occurrence + plain observations → {act|wait, next-decision epoch,
