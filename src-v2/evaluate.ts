@@ -157,6 +157,62 @@ function rejectGlob(path: string): void {
   if (path.includes('.*') || path === '*') unsupported(`glob path '${path}'`);
 }
 
+// ── Addressed reads (THE DSL PROGRAM seam 1, 2026-07-06) ─────────────
+//
+// An `{at: {…}}` arg is a read of ADDRESSED evidence — a fact that lives
+// beyond the local state object (another topic, another store). This
+// module stays address-agnostic: it never resolves the term itself. A
+// GATHER phase (the fact-space layer — topic-dao's condition gatherer)
+// walks the same terms via `collectAtTerms`, resolves each through its
+// own read interface, and supplies the value in `bindings` under the
+// term's canonical key (`atTermKey`). Ungathered evidence reads as
+// undefined ⇒ comparisons over it are UNMET — absence is part of the
+// type, never an exception and never silently true.
+
+function isAtTerm(v: unknown): v is { at: unknown } {
+  return (
+    typeof v === 'object' && v !== null && !Array.isArray(v) &&
+    Object.keys(v).length === 1 && 'at' in v
+  );
+}
+
+function stableStringify(v: unknown): string {
+  if (Array.isArray(v)) return '[' + v.map(stableStringify).join(',') + ']';
+  if (typeof v === 'object' && v !== null) {
+    return '{' + Object.keys(v).sort().map(
+      k => JSON.stringify(k) + ':' + stableStringify((v as Record<string, unknown>)[k]),
+    ).join(',') + '}';
+  }
+  return JSON.stringify(v);
+}
+
+/** Canonical evidence key for an at-term — the ONE definition both the
+ *  judge (here) and any gatherer key by. */
+export function atTermKey(term: { at: unknown }): string {
+  return '@' + stableStringify(term.at);
+}
+
+/** Every at-term in a constraint tree, deduped by canonical key — what
+ *  a gatherer must resolve before judgment. */
+export function collectAtTerms(constraint: Constraint): Array<{ at: unknown }> {
+  const seen = new Map<string, { at: unknown }>();
+  const walk = (c: Constraint): void => {
+    for (const arg of c.args ?? []) {
+      if (isAtTerm(arg)) {
+        seen.set(atTermKey(arg), arg);
+      } else if (
+        typeof arg === 'object' && arg !== null && !Array.isArray(arg) &&
+        typeof (arg as { op?: unknown }).op === 'string' &&
+        Array.isArray((arg as { args?: unknown }).args)
+      ) {
+        walk(arg as Constraint);
+      }
+    }
+  };
+  walk(constraint);
+  return [...seen.values()];
+}
+
 /** Argument value of a comparison side. `side` encodes the laws
  *  contract: 'path' (LHS) — strings are paths, missing means undefined;
  *  'value' (RHS) — strings are paths when present, else the literal
@@ -177,6 +233,12 @@ function resolveArg(
     const v = valueAtPath(state, path);
     if (side === 'value') return v !== undefined ? v : path;
     return v;
+  }
+  if (isAtTerm(arg)) {
+    // Addressed evidence: the gathered value, verbatim (type-preserving).
+    // Ungathered ⇒ undefined ⇒ unmet — on BOTH sides (an RHS at-term is
+    // evidence too, never falling back to literal text).
+    return bindings[atTermKey(arg)];
   }
   if (typeof arg === 'object' && arg !== null) {
     unsupported(`argument expression ${JSON.stringify(arg)}`);

@@ -27,7 +27,7 @@ export type {
 // Sequence. Relations delegate to the shared `check` machinery. The
 // entry point for consumers (e.g. topic-dao write conditions) that hold
 // folded state as a plain object.
-export { evaluateConstraint } from './evaluate';
+export { evaluateConstraint, atTermKey, collectAtTerms } from './evaluate';
 
 // ─── The budget/threshold relations (one definition, three tiers) ───────
 // withinMax = `number ∧ max(limit)` conformance; reachedMin = the dual.

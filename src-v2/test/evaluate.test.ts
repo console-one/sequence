@@ -283,3 +283,50 @@ describe('evaluateConstraint — import surface', () => {
     expect(v2.evaluateConstraint).toBe(evaluateConstraint);
   });
 });
+
+// ── Addressed reads (THE DSL PROGRAM seam 1) ──────────────────────────
+
+import { atTermKey, collectAtTerms } from '../evaluate';
+
+describe('at-terms: addressed evidence reads (gather-then-judge)', () => {
+  const term = { at: { address: { uri: 'tp-1', as: 'topic' }, path: 'metadata.track.alice.d' } };
+  const law = { op: 'gte', args: [term, 0.8] } as const;
+
+  test('gathered evidence judges normally, type-preserving', () => {
+    expect(evaluateConstraint(law as never, {}, { [atTermKey(term)]: 0.9 })).toBe(true);
+    expect(evaluateConstraint(law as never, {}, { [atTermKey(term)]: 0.5 })).toBe(false);
+  });
+
+  test('UNGATHERED evidence is unmet — never silently true, no throw', () => {
+    expect(evaluateConstraint(law as never, {}, {})).toBe(false);
+  });
+
+  test('canonical key is order-insensitive (one definition for judge + gatherer)', () => {
+    const reordered = { at: { path: 'metadata.track.alice.d', address: { as: 'topic', uri: 'tp-1' } } };
+    expect(atTermKey(reordered)).toBe(atTermKey(term));
+  });
+
+  test('collectAtTerms walks nested clauses and dedupes', () => {
+    const nested = {
+      op: 'and_clause',
+      args: [law, { op: 'or_clause', args: [law, { op: 'exists', args: ['x'] }] }],
+    };
+    const terms = collectAtTerms(nested as never);
+    expect(terms).toHaveLength(1);
+    expect(atTermKey(terms[0])).toBe(atTermKey(term));
+  });
+
+  test('an RHS at-term is evidence too — ungathered RHS never falls back to literal text', () => {
+    const rhsLaw = { op: 'eq', args: ['metadata.phase', term] };
+    expect(evaluateConstraint(rhsLaw as never, { metadata: { phase: 'ready' } }, {})).toBe(false);
+    expect(
+      evaluateConstraint(rhsLaw as never, { metadata: { phase: 'ready' } }, { [atTermKey(term)]: 'ready' }),
+    ).toBe(true);
+  });
+
+  test('other object args stay LOUD (the v1-engine forms are still refused)', () => {
+    expect(() =>
+      evaluateConstraint({ op: 'eq', args: [{ ref: 'x' }, 1] } as never, {}, {}),
+    ).toThrow(/not supported/);
+  });
+});
