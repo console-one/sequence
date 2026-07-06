@@ -97,7 +97,10 @@ function hasLeaf(v: unknown): boolean {
  *  the path under leaf-mount addressability: undefined-valued keys and
  *  leafless objects read as absent. (Keys containing a literal '.' are
  *  not addressable — same limitation the mount path had.) */
-function valueAtPath(state: unknown, path: string): unknown {
+// EXPORTED for gatherers (topic-dao's condition evidence): evidence
+// values must be read with the SAME leaf-addressability semantics the
+// judge uses — one definition (DSL PROGRAM seam 1).
+export function valueAtPath(state: unknown, path: string): unknown {
   let cur: unknown = state;
   for (const seg of path.split('.')) {
     if (!isPlainObject(cur)) return undefined;
