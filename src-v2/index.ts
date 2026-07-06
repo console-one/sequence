@@ -29,6 +29,24 @@ export type {
 // folded state as a plain object.
 export { evaluateConstraint } from './evaluate';
 
+// ─── The budget/threshold relations (one definition, three tiers) ───────
+// withinMax = `number ∧ max(limit)` conformance; reachedMin = the dual.
+// Fail-closed on non-finite. Consumed by the desktop gate, the firing
+// laws, and the deployed topic-service admission gate.
+export { withinMax, reachedMin } from './relations';
+
+// ─── Standalone commitment election (S-B2 POSMDP / R8) ──────────────────
+// The decide-when election an actor runs at a decision epoch: one owed
+// occurrence + plain observations → {act|wait, next-decision epoch,
+// deadline}. WAIT is first-class (the actor's self-scheduled wake). v0 =
+// the trivial policy; the planner (searchCandidates/feasibility) replaces
+// the internals without moving the seam. Distinct from the v1 root's
+// electCommitment (the write-lease API): this one decides, writes nothing.
+export { electCommitment } from './elect';
+export type {
+  CommitmentCandidate, ElectObservations, Election, ElectReason,
+} from './elect';
+
 // ─── Stdlib installers ──────────────────────────────────────────────────
 // Each install* function mounts its rule(s) + registers its emitter(s) /
 // guard op(s) on the sequence. Idempotent; safe to call once at boot.
