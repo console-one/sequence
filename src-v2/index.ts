@@ -29,6 +29,18 @@ export type {
 // folded state as a plain object.
 export { evaluateConstraint, atTermKey, collectAtTerms, valueAtPath } from './evaluate';
 
+// ─── Standalone procedure planning (DSL PROGRAM seam 4) ─────────────────
+// A ProcedureManifest is serializable vocabulary: typed params (sequence
+// Types validated by check()), a closed derivation vocabulary, guarded
+// steps. planProcedure = pure evaluator → planned facts the host runner
+// executes; procedureGaps = the wizard's open-contract read;
+// planProcessorConfig = the edit-side config re-derivation.
+export { planProcedure, procedureGaps, planProcessorConfig } from './procedure';
+export type {
+  ProcedureManifest, ProcedureParam, ProcedureStep, ProcedureValue,
+  TemplateValue, PlannedFact, ProcedureGap, PlanResult, StepGuard,
+} from './procedure';
+
 // ─── The budget/threshold relations (one definition, three tiers) ───────
 // withinMax = `number ∧ max(limit)` conformance; reachedMin = the dual.
 // Fail-closed on non-finite. Consumed by the desktop gate, the firing
