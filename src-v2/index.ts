@@ -47,6 +47,19 @@ export type {
 // laws, and the deployed topic-service admission gate.
 export { withinMax, reachedMin } from './relations';
 
+// ─── Standalone view planning (DSL PROGRAM seam 5 / R5) ─────────────────
+// A ViewSpec is serializable vocabulary: sections in priority order, each
+// offering rungs richest→cheapest with host-gathered costs. planView =
+// pure evaluator → one elected rung per section + spend + the eviction
+// manifest (what the reader is NOT seeing). The expression elects and
+// budgets; it never formats — materialization stays with the host runner.
+// Selection semantics migrated from @console-one/compile's greedy selector
+// (beam/Lagrangian stay archived until measured prices exist).
+export { planView } from './view';
+export type {
+  ViewSpec, ViewSection, ViewRung, ViewCost, ViewPlan, ViewPick, ViewEviction,
+} from './view';
+
 // ─── Standalone commitment election (S-B2 POSMDP / R8) ──────────────────
 // The decide-when election an actor runs at a decision epoch: one owed
 // occurrence + plain observations → {act|wait, next-decision epoch,
