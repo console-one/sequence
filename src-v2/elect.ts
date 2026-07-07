@@ -75,6 +75,14 @@ export interface ElectObservations {
   eligible: boolean;
   /** Do prices admit acting now (v0: the host's boolean; v0b: priced). */
   budgetAdmits: boolean;
+  /** The instant these observations STOP BEING VALID — e.g. the soonest
+   *  valid-until among the rendered claims eligibility derived from
+   *  (timeHorizon over their validity terms). A known future expiry IS
+   *  a decision epoch: every returned epoch is clamped to ≤ this bound
+   *  (when it is in the future), so the actor re-derives no later than
+   *  the moment its observed world can change out from under it.
+   *  Absent/past horizons change nothing. */
+  observationHorizon?: number;
   /** A winning claim already covers this occurrence on the spine. */
   alreadyClaimed: boolean;
 }
@@ -126,13 +134,28 @@ export function electCommitment(
     }
   }
 
+  // Expiry-as-deviation: a FUTURE observation horizon bounds every
+  // epoch this election returns — the actor must re-derive no later
+  // than the instant its observed claims can lapse. A horizon at or
+  // before now is ignored (the observations were just derived; any
+  // already-lapsed claim is already reflected in them).
+  const horizon =
+    obs.observationHorizon !== undefined &&
+    Number.isFinite(obs.observationHorizon) &&
+    obs.observationHorizon > now
+      ? obs.observationHorizon
+      : null;
+  const bound = (epoch: number): number =>
+    horizon !== null && horizon < epoch ? horizon : epoch;
+
   // Dueness is a conformance relation, not an if-statement in disguise:
   // owedAt satisfies `number ∧ max(now)` iff the occurrence is at or
   // before now (max is inclusive — due exactly at now IS due).
   const due = check(createType('number', [max(now)]), owedAt).ok;
   if (!due) {
-    // The candidate becomes due at owedAt — that IS the next decision.
-    return { action: 'wait', epoch: owedAt, reason: 'not-due' };
+    // The candidate becomes due at owedAt — that IS the next decision
+    // (or sooner, if the observed claims expire first).
+    return { action: 'wait', epoch: bound(owedAt), reason: 'not-due' };
   }
 
   const waitToNext = (reason: ElectReason): Election => {
@@ -144,7 +167,7 @@ export function electCommitment(
         `re-derive the owed occurrence before electing`,
       );
     }
-    return { action: 'wait', epoch: nextOccurrence, reason };
+    return { action: 'wait', epoch: bound(nextOccurrence), reason };
   };
 
   if (obs.alreadyClaimed) return waitToNext('already-claimed');
@@ -153,7 +176,7 @@ export function electCommitment(
 
   return {
     action: 'act',
-    epoch: nextOccurrence,
+    epoch: bound(nextOccurrence),
     ...(candidate.terms !== undefined
       ? { deadline: now + candidate.terms.withinMs }
       : {}),

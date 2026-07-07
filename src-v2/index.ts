@@ -60,6 +60,14 @@ export type {
   ViewSpec, ViewSection, ViewRung, ViewCost, ViewPlan, ViewPick, ViewEviction,
 } from './view';
 
+// ─── Constraint time horizons (expiry-as-deviation) ─────────────────────
+// timeHorizon reads the CLOSED valid-until family off a serialized
+// constraint (lte/lt($now, T); and_clause → min). Hosts feed the soonest
+// horizon among observed claims into electCommitment's observationHorizon
+// so a known future expiry bounds the actor's next decision epoch.
+export { timeHorizon } from './validity';
+export type { ConstraintShape } from './validity';
+
 // ─── Standalone commitment election (S-B2 POSMDP / R8) ──────────────────
 // The decide-when election an actor runs at a decision epoch: one owed
 // occurrence + plain observations → {act|wait, next-decision epoch,
