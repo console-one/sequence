@@ -75,6 +75,13 @@ export interface ElectObservations {
   eligible: boolean;
   /** Do prices admit acting now (v0: the host's boolean; v0b: priced). */
   budgetAdmits: boolean;
+  /** The actor's OWN SLOT from the space's designation fold (allocation
+   *  as declared space law): before it, the election waits to exactly
+   *  that instant (reason 'awaiting-designation'); at/after it, an
+   *  unclaimed owed occurrence is acted on — every slot expires into
+   *  act, so designation shapes WHEN, never whether. Absent = no rule
+   *  declared = the classic race at owedAt. */
+  designatedAt?: number;
   /** The instant these observations STOP BEING VALID — e.g. the soonest
    *  valid-until among the rendered claims eligibility derived from
    *  (timeHorizon over their validity terms). A known future expiry IS
@@ -92,7 +99,8 @@ export type ElectReason =
   | 'not-due'
   | 'already-claimed'
   | 'ineligible'
-  | 'budget-blocked';
+  | 'budget-blocked'
+  | 'awaiting-designation';
 
 /** The election. `epoch` is ALWAYS the time of this actor's next
  *  decision — for `wait` it is the wake to schedule; for `act` it is
@@ -173,6 +181,19 @@ export function electCommitment(
   if (obs.alreadyClaimed) return waitToNext('already-claimed');
   if (!obs.eligible) return waitToNext('ineligible');
   if (!obs.budgetAdmits) return waitToNext('budget-blocked');
+  if (
+    obs.designatedAt !== undefined &&
+    Number.isFinite(obs.designatedAt) &&
+    obs.designatedAt > now
+  ) {
+    // My turn hasn't arrived: wait to exactly my slot (the designation
+    // fold's answer), still bounded by the observation horizon.
+    return {
+      action: 'wait',
+      epoch: bound(obs.designatedAt),
+      reason: 'awaiting-designation',
+    };
+  }
 
   return {
     action: 'act',

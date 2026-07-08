@@ -68,6 +68,15 @@ export type {
 export { timeHorizon } from './validity';
 export type { ConstraintShape } from './validity';
 
+// ─── The designation fold (allocation as declared space law) ────────────
+// The space's declared rule + the claim rows on its own spine order who
+// takes an owed occurrence and when each turn arrives — a pure fold every
+// member computes identically; slots expire into act (starvation-proof);
+// the claim fold stays the adjudicator. Hosts feed the actor's own slot
+// into electCommitment as observations.designatedAt.
+export { designate, DEFAULT_FAILOVER_MS } from './designate';
+export type { AllocationRule, ClaimRow, Designation } from './designate';
+
 // ─── Standalone commitment election (S-B2 POSMDP / R8) ──────────────────
 // The decide-when election an actor runs at a decision epoch: one owed
 // occurrence + plain observations → {act|wait, next-decision epoch,
