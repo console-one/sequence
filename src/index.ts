@@ -23,10 +23,10 @@ export type { Type, Constraint, Expr } from './type';
 export {
   compose, covers, check, backwardInfer, selectFirstBranch,
   typeSpecificity, evaluateExpr, exprConcreteness,
-  cdf, posteriorPredictive, conjugateUpdate,
+  cdf, cdfInverse, posteriorPredictive, conjugateUpdate,
   planFeasibility,
 } from './compose';
-export type { Gap, Follow, CheckResult, DependencyModel, StepDistribution, PlanFeasibilityTrace } from './compose';
+export type { Gap, Follow, CheckResult, DependencyModel, StepDistribution, PlanFeasibilityTrace, CdfInverseResult } from './compose';
 
 // Statements
 export type { MountEntry, Block, BlockOpts } from './statement';

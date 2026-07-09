@@ -1200,6 +1200,13 @@ export type DistParams = Record<string, number>;
  * Used by feasibility() to answer: P(tool completes by deadline).
  */
 export function cdf(family: string, t: number, params: DistParams): number {
+  // Poisson is a COUNT distribution: P(X ≤ ⌊t⌋) is already positive at
+  // t = 0 (e^{-lambda}), so the time-origin guard below must not zero it.
+  if (family === 'poisson') {
+    if (t < 0) return 0;
+    const lambda = params.lambda ?? 1;
+    return regularizedGammaQ(Math.floor(t) + 1, lambda);
+  }
   if (t <= 0) return 0;
   switch (family) {
     case 'exponential': {
@@ -1220,14 +1227,201 @@ export function cdf(family: string, t: number, params: DistParams): number {
     case 'fixed': {
       return t >= (params.value ?? 0) ? 1 : 0;
     }
+    case 'linear': {
+      // P(t) = slope·t + intercept, clamped to [0, 1].
+      return clamp01((params.slope ?? 0) * t + (params.intercept ?? 0));
+    }
+    case 'loglinear': {
+      // P(t) = a·ln(t) + b, clamped to [0, 1].
+      return clamp01((params.a ?? 0) * Math.log(t) + (params.b ?? 0));
+    }
+    case 'gamma': {
+      // Erlang/gamma completion: time until the `shape`-th arrival of a
+      // Poisson process at `rate` — the canonical arrival-process CDF.
+      const shape = params.shape ?? 1;
+      const rate = params.rate ?? 0.001;
+      return regularizedGammaP(shape, rate * t);
+    }
+    case 'piecewise': {
+      // Knots {t0,p0, t1,p1, …}: linear interpolation between knots,
+      // 0 before the first, pLast after the last. Two knots at the same
+      // t express a jump.
+      const knots = piecewiseKnots(params);
+      if (t < knots[0].t) return 0;
+      const last = knots[knots.length - 1];
+      if (t >= last.t) return clamp01(last.p);
+      let i = 1;
+      while (knots[i].t <= t) i++;
+      const a = knots[i - 1], b = knots[i];
+      const dt = b.t - a.t;
+      if (dt === 0) return clamp01(b.p);
+      return clamp01(a.p + ((t - a.t) / dt) * (b.p - a.p));
+    }
     default:
-      return 0.5;
+      // No silent default (this was `return 0.5`): an unknown family is a
+      // declaration error, not a coin flip. Same honesty contract as the
+      // v2 standalone evaluator.
+      throw new Error(
+        `cdf: unknown distribution family '${family}' (supported: ` +
+        `exponential, weibull, lognormal, fixed, linear, loglinear, ` +
+        `poisson, gamma, piecewise)`,
+      );
   }
+}
+
+function clamp01(p: number): number {
+  return p < 0 ? 0 : p > 1 ? 1 : p;
+}
+
+/** Parse piecewise knots {t0,p0,t1,p1,…} — sorted by t, p monotone
+ *  non-decreasing (it is a CDF). Throws on empty or non-monotone. */
+function piecewiseKnots(params: DistParams): Array<{ t: number; p: number }> {
+  const knots: Array<{ t: number; p: number }> = [];
+  for (let i = 0; ; i++) {
+    const t = params[`t${i}`], p = params[`p${i}`];
+    if (t === undefined || p === undefined) break;
+    knots.push({ t, p });
+  }
+  if (knots.length === 0) {
+    throw new Error(`cdf: piecewise family requires knot params t0,p0,t1,p1,…`);
+  }
+  knots.sort((a, b) => a.t - b.t);
+  for (let i = 1; i < knots.length; i++) {
+    if (knots[i].p < knots[i - 1].p) {
+      throw new Error(
+        `cdf: piecewise knots must be monotone non-decreasing in p ` +
+        `(a CDF never falls): p at t=${knots[i].t} is ${knots[i].p} < ${knots[i - 1].p}`,
+      );
+    }
+  }
+  return knots;
 }
 
 /** Survival: P(X > t) = 1 - CDF(t). */
 export function survival(family: string, t: number, params: DistParams): number {
   return 1 - cdf(family, t, params);
+}
+
+export type CdfInverseResult = {
+  /** First t at which P(X ≤ t) reaches the threshold. */
+  t: number;
+  /** True when computed numerically or the threshold falls on a
+   *  discontinuity — the deltat R5 honesty flag. */
+  approximate: boolean;
+};
+
+/**
+ * Invert a CDF: given a probability threshold, return the FIRST time at
+ * which that threshold is reached (deltat/calculations.md R4).
+ *
+ * "When will this be 90% likely?" — the working-backwards read. Closed
+ * form where one exists; monotone bisection (flagged approximate)
+ * otherwise (R5). Throws when the threshold is unreachable — a CDF that
+ * tops out below p has no first-reach time, and guessing one would be
+ * the silent-0.5 bug in a different costume.
+ */
+export function cdfInverse(family: string, p: number, params: DistParams): CdfInverseResult {
+  if (!(p > 0 && p <= 1)) {
+    throw new Error(`cdfInverse: threshold must be in (0, 1], got ${p}`);
+  }
+  const asymptotic = (): never => {
+    throw new Error(
+      `cdfInverse: ${family} reaches 1 only asymptotically — p = 1 has no finite first-reach time`,
+    );
+  };
+  switch (family) {
+    case 'exponential': {
+      if (p === 1) asymptotic();
+      const rate = params.rate ?? 0.001;
+      return { t: -Math.log(1 - p) / rate, approximate: false };
+    }
+    case 'weibull': {
+      if (p === 1) asymptotic();
+      const shape = params.shape ?? 1;
+      const scale = params.scale ?? 1000;
+      return { t: scale * Math.pow(-Math.log(1 - p), 1 / shape), approximate: false };
+    }
+    case 'lognormal': {
+      if (p === 1) asymptotic();
+      return { t: bisectCdf(family, p, params), approximate: true };
+    }
+    case 'fixed':
+      // Degenerate: the whole mass arrives at `value`.
+      return { t: params.value ?? 0, approximate: false };
+    case 'linear': {
+      const slope = params.slope ?? 0;
+      const intercept = params.intercept ?? 0;
+      if (intercept >= p) return { t: 0, approximate: false };
+      if (slope <= 0) {
+        throw new Error(`cdfInverse: linear CDF with slope ${slope} never reaches ${p}`);
+      }
+      return { t: (p - intercept) / slope, approximate: false };
+    }
+    case 'loglinear': {
+      const a = params.a ?? 0;
+      const b = params.b ?? 0;
+      if (a <= 0) {
+        throw new Error(`cdfInverse: loglinear inversion requires a > 0 (got a=${a})`);
+      }
+      return { t: Math.exp((p - b) / a), approximate: false };
+    }
+    case 'poisson': {
+      if (p === 1) asymptotic();
+      const lambda = params.lambda ?? 1;
+      // Step function: first-reach times are exactly the integers.
+      for (let k = 0; k <= 1_000_000; k++) {
+        if (regularizedGammaQ(k + 1, lambda) >= p) return { t: k, approximate: false };
+      }
+      throw new Error(`cdfInverse: poisson(lambda=${lambda}) did not reach ${p} within 1e6 events`);
+    }
+    case 'gamma': {
+      if (p === 1) asymptotic();
+      return { t: bisectCdf(family, p, params), approximate: true };
+    }
+    case 'piecewise': {
+      const knots = piecewiseKnots(params);
+      const last = knots[knots.length - 1];
+      if (clamp01(last.p) < p) {
+        throw new Error(`cdfInverse: piecewise CDF tops out at ${last.p} < threshold ${p}`);
+      }
+      if (clamp01(knots[0].p) >= p) return { t: knots[0].t, approximate: false };
+      for (let i = 1; i < knots.length; i++) {
+        const a = knots[i - 1], b = knots[i];
+        if (clamp01(b.p) < p) continue;
+        if (b.t === a.t) {
+          // Threshold falls inside a jump: F skips over p, so there is no
+          // t with F(t) = p — the jump instant is first-reach, flagged.
+          return { t: b.t, approximate: true };
+        }
+        const t = a.t + ((p - clamp01(a.p)) / (clamp01(b.p) - clamp01(a.p))) * (b.t - a.t);
+        return { t, approximate: false };
+      }
+      // Monotone knots + the top-out guard above make this unreachable.
+      throw new Error(`cdfInverse: piecewise inversion failed for p=${p}`);
+    }
+    default:
+      throw new Error(
+        `cdfInverse: unknown distribution family '${family}' (supported: ` +
+        `exponential, weibull, lognormal, fixed, linear, loglinear, ` +
+        `poisson, gamma, piecewise)`,
+      );
+  }
+}
+
+/** Monotone bisection inverse for families without a closed form:
+ *  double the bracket until it clears p, then bisect. */
+function bisectCdf(family: string, p: number, params: DistParams): number {
+  let hi = 1;
+  for (let i = 0; i < 1024 && cdf(family, hi, params) < p; i++) hi *= 2;
+  if (cdf(family, hi, params) < p) {
+    throw new Error(`cdfInverse: ${family} CDF did not reach ${p} at any finite t`);
+  }
+  let lo = 0;
+  for (let i = 0; i < 200; i++) {
+    const mid = (lo + hi) / 2;
+    if (cdf(family, mid, params) >= p) hi = mid; else lo = mid;
+  }
+  return hi;
 }
 
 /** Posterior predictive for conjugate priors. */
@@ -1238,7 +1432,12 @@ export function posteriorPredictive(family: string, params: DistParams): number 
     case 'gamma':
       return (params.shape ?? 1) / (params.rate ?? 1);
     default:
-      return 0.5;
+      // No silent default (this was `return 0.5`): dirichlet needs a
+      // category argument this signature doesn't carry; anything else is
+      // a declaration error.
+      throw new Error(
+        `posteriorPredictive: unsupported conjugate family '${family}' (supported: beta, gamma)`,
+      );
   }
 }
 
@@ -1259,6 +1458,62 @@ export function conjugateUpdate(
     default:
       return params;
   }
+}
+
+/** Log-gamma (Lanczos approximation, g=7). */
+function lgamma(x: number): number {
+  const g = [
+    676.5203681218851, -1259.1392167224028, 771.32342877765313,
+    -176.61502916214059, 12.507343278686905, -0.13857109526572012,
+    9.9843695780195716e-6, 1.5056327351493116e-7,
+  ];
+  if (x < 0.5) {
+    // Reflection: Γ(x)Γ(1−x) = π / sin(πx)
+    return Math.log(Math.PI / Math.sin(Math.PI * x)) - lgamma(1 - x);
+  }
+  x -= 1;
+  let a = 0.99999999999980993;
+  const t = x + 7.5;
+  for (let i = 0; i < g.length; i++) a += g[i] / (x + i + 1);
+  return 0.5 * Math.log(2 * Math.PI) + (x + 0.5) * Math.log(t) - t + Math.log(a);
+}
+
+/** Regularized lower incomplete gamma P(s, x) — series for x < s+1,
+ *  continued fraction (Lentz) otherwise. Numerical Recipes shape. */
+function regularizedGammaP(s: number, x: number): number {
+  if (x <= 0) return 0;
+  if (x < s + 1) {
+    // Series representation
+    let sum = 1 / s, term = sum, n = s;
+    for (let i = 0; i < 500; i++) {
+      n += 1;
+      term *= x / n;
+      sum += term;
+      if (Math.abs(term) < Math.abs(sum) * 1e-15) break;
+    }
+    return sum * Math.exp(-x + s * Math.log(x) - lgamma(s));
+  }
+  // Continued fraction for Q(s, x); P = 1 − Q
+  const tiny = 1e-300;
+  let b = x + 1 - s, c = 1 / tiny, d = 1 / b, h = d;
+  for (let i = 1; i < 500; i++) {
+    const an = -i * (i - s);
+    b += 2;
+    d = an * d + b; if (Math.abs(d) < tiny) d = tiny;
+    c = b + an / c; if (Math.abs(c) < tiny) c = tiny;
+    d = 1 / d;
+    const del = d * c;
+    h *= del;
+    if (Math.abs(del - 1) < 1e-15) break;
+  }
+  const q = Math.exp(-x + s * Math.log(x) - lgamma(s)) * h;
+  return 1 - q;
+}
+
+/** Regularized upper incomplete gamma Q(s, x) = 1 − P(s, x).
+ *  Q(k+1, λ) is exactly the Poisson CDF P(X ≤ k) at rate λ. */
+function regularizedGammaQ(s: number, x: number): number {
+  return 1 - regularizedGammaP(s, x);
 }
 
 /** Error function approximation (Abramowitz & Stegun). */

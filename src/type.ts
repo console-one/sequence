@@ -347,8 +347,15 @@ export function equation(
  *   weibull:     { shape, scale }        → P(T≤t) = 1 - e^(-(t/scale)^shape)
  *   lognormal:   { mu, sigma }          → P(T≤t) = Φ((ln(t)-mu)/sigma)
  *   beta:        { alpha, beta }         → for reliability/probability params
- *   gamma:       { shape, rate }         → for rate parameters
+ *   gamma:       { shape, rate }         → Erlang: time to `shape`-th arrival at `rate`
  *   fixed:       { value }               → degenerate (point estimate)
+ *   linear:      { slope, intercept }    → P(t) = slope·t + intercept, clamped [0,1]
+ *   loglinear:   { a, b }                → P(t) = a·ln(t) + b, clamped [0,1]
+ *   poisson:     { lambda }              → P(X≤⌊t⌋), count of arrivals
+ *   piecewise:   { t0,p0, t1,p1, … }     → knot-interpolated CDF (same-t knots = jump)
+ *
+ * (The arrival families — the deltat/calculations.md R2 set — invert via
+ * cdfInverse: threshold → first-reach time.)
  *
  * @param property — what this distribution describes ('time', 'reliability', etc.)
  * @param family   — distribution family name
@@ -356,7 +363,9 @@ export function equation(
  */
 export function distribution(
   property: string,
-  family: 'exponential' | 'weibull' | 'lognormal' | 'beta' | 'gamma' | 'fixed',
+  family:
+    | 'exponential' | 'weibull' | 'lognormal' | 'beta' | 'gamma' | 'fixed'
+    | 'linear' | 'loglinear' | 'poisson' | 'piecewise',
   params: Record<string, number>,
 ): Constraint {
   return { op: 'distribution', args: [property, family, params] };

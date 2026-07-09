@@ -262,9 +262,12 @@ export {
 } from '../src/compose';
 // `cdf` / `survival` / `posteriorPredictive` / `conjugateUpdate` are
 // re-exported above (via stdlib) — same symbols, single source of truth.
+// `cdfInverse` (threshold → first-reach time, deltat R4) is not consumed
+// by stdlib, so it exports straight from the shared compose module.
+export { cdfInverse } from '../src/compose';
 export type {
   Gap, Follow, CheckResult,
-  StepDistribution, PlanFeasibilityTrace,
+  StepDistribution, PlanFeasibilityTrace, CdfInverseResult,
 } from '../src/compose';
 // Compose's DependencyModel is broader than stdlib's (4 values vs 2).
 // Alias to avoid collision; consumers rarely need the compose-side enum.
