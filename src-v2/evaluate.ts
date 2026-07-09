@@ -45,19 +45,31 @@
  *   eq neq lt lte gt gte exists notExists count_lt count_gte
  *   or_clause and_clause not_clause
  *
+ * ARITHMETIC ARGS (2026-07-09, cash-flow seam): a comparison arg may be
+ * a serialized Expr from the shared laws vocabulary (../src/type) —
+ * {add}/{mul}/{pm} over literals and paths. Evaluation is DELEGATED to
+ * `evaluateExpr` from ../src/compose (the same delegation discipline as
+ * `check` above — reuse, never reimplement); refs resolve through THIS
+ * module's addressing ($var bindings, leaf mounts). A ref that resolves
+ * to anything but a number leaves the expression unevaluable ⇒ the
+ * comparison is UNMET, never silently met. This is what lets a declared
+ * law say "sum of these amounts stays under this bound" without a
+ * Sequence instance.
+ *
  * UNSUPPORTED — LOUD BY DESIGN: `forall` (variable-binding iteration),
- * glob paths (`a.b.*`), aggregate/arithmetic/history argument
- * expressions ({fn}, {op,lhs,rhs}, {ref}, {op:'history'}), and every
- * other v1-engine op (regex/between/one_of/contains/cdf_gte/...) exist
- * only in the v1 engine's evaluator. The v2 machinery cannot evaluate
- * them, so this module throws a named error instead of guessing or
- * quietly returning false. Honesty over completeness: a caller that
- * needs one of these forms should see the gap, not a silent verdict.
+ * glob paths (`a.b.*`), {fn} expression terms (this module carries no
+ * function registry), history argument expressions ({op:'history'}),
+ * and every other v1-engine op (regex/between/one_of/contains/
+ * cdf_gte/...) exist only in the v1 engine's evaluator. The v2
+ * machinery cannot evaluate them, so this module throws a named error
+ * instead of guessing or quietly returning false. Honesty over
+ * completeness: a caller that needs one of these forms should see the
+ * gap, not a silent verdict.
  */
 
-import type { Constraint } from '../src/type';
+import type { Constraint, Expr } from '../src/type';
 import { createType, literal, min, max, type Kind } from '../src/type';
-import { check } from '../src/compose';
+import { check, evaluateExpr } from '../src/compose';
 
 const SUPPORTED_OPS = [
   'eq', 'neq', 'lt', 'lte', 'gt', 'gte',
@@ -219,8 +231,9 @@ export function collectAtTerms(constraint: Constraint): Array<{ at: unknown }> {
 /** Argument value of a comparison side. `side` encodes the laws
  *  contract: 'path' (LHS) — strings are paths, missing means undefined;
  *  'value' (RHS) — strings are paths when present, else the literal
- *  string. Non-string scalars are literals. Expression objects are the
- *  v1 engine's — loud. */
+ *  string. Non-string scalars are literals. Arithmetic Expr objects
+ *  delegate to the shared evaluateExpr; other expression objects are
+ *  the v1 engine's — loud. */
 function resolveArg(
   arg: unknown,
   side: 'path' | 'value',
@@ -243,10 +256,66 @@ function resolveArg(
     // evidence too, never falling back to literal text).
     return bindings[atTermKey(arg)];
   }
+  if (isExprTerm(arg)) {
+    return resolveExprArg(arg, state, bindings);
+  }
   if (typeof arg === 'object' && arg !== null) {
     unsupported(`argument expression ${JSON.stringify(arg)}`);
   }
   return arg;
+}
+
+// ── Arithmetic expression args (cash-flow seam, 2026-07-09) ──────────
+
+/** Is this a serialized Expr object term? ({add}/{mul}/{pm}/{fn} — the
+ *  shared vocabulary from ../src/type. {fn} is admitted here so it can
+ *  be refused with its own named error inside resolveExprArg.) */
+function isExprTerm(v: unknown): v is Exclude<Expr, number | string> {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return false;
+  const o = v as Record<string, unknown>;
+  return Array.isArray(o.add) || Array.isArray(o.mul) ||
+    ('pm' in o && 'margin' in o) ||
+    (typeof o.fn === 'string' && 'arg' in o);
+}
+
+/** Evaluate an Expr arg by DELEGATION to the shared evaluateExpr.
+ *  Refs resolve with this module's addressing discipline; a ref that
+ *  doesn't resolve to a number stays unbound, so evaluateExpr returns
+ *  undefined and the enclosing comparison is unmet — never silently
+ *  met. For a {pm} band the comparison uses the center value. */
+function resolveExprArg(
+  expr: Expr,
+  state: unknown,
+  bindings: Record<string, unknown>,
+): number | undefined {
+  const refs: string[] = [];
+  const walk = (e: Expr): void => {
+    if (typeof e === 'string') { refs.push(e); return; }
+    if (typeof e !== 'object' || e === null) return;
+    if ('fn' in e) {
+      unsupported(
+        `expression term {fn: '${e.fn}'} (the standalone evaluator has no function registry)`,
+      );
+    }
+    if ('add' in e) { e.add.forEach(walk); return; }
+    if ('mul' in e) { e.mul.forEach(walk); return; }
+    if ('pm' in e) { walk(e.pm); walk(e.margin); return; }
+  };
+  walk(expr);
+
+  const exprBindings = new Map<string, number>();
+  for (const ref of refs) {
+    const bound = wholeBinding(ref, bindings);
+    if (bound.hit) {
+      if (typeof bound.value === 'number') exprBindings.set(ref, bound.value);
+      continue; // non-number binding: ref stays unresolved ⇒ unmet
+    }
+    const path = substituteSegments(ref, bindings);
+    rejectGlob(path);
+    const v = valueAtPath(state, path);
+    if (typeof v === 'number') exprBindings.set(ref, v);
+  }
+  return evaluateExpr(expr, exprBindings)?.value;
 }
 
 /** The kind of a literal value, for conformance checking. */

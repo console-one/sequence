@@ -330,3 +330,68 @@ describe('at-terms: addressed evidence reads (gather-then-judge)', () => {
     ).toThrow(/not supported/);
   });
 });
+
+describe('evaluateConstraint — arithmetic Expr args (delegated to evaluateExpr)', () => {
+  /** The cash-flow law shape: declared amounts + a declared bound. */
+  const cashState = () => ({
+    subscriptions: {
+      aws: { amount: 220 },
+      github: { amount: 21 },
+      vercel: { amount: 20 },
+    },
+    budget: { monthly: 300 },
+  });
+
+  test('lte over a sum of amount paths vs a bound path', () => {
+    const sum = {
+      add: ['subscriptions.aws.amount', 'subscriptions.github.amount', 'subscriptions.vercel.amount'],
+    };
+    expect(evaluateConstraint(c('lte', sum, 'budget.monthly'), cashState())).toBe(true);
+    expect(evaluateConstraint(c('gt', sum, 250), cashState())).toBe(true);
+    expect(evaluateConstraint(c('lte', sum, 260), cashState())).toBe(false); // 261 > 260
+  });
+
+  test('mul: product of a path and a literal (annualization)', () => {
+    const annual = { mul: ['subscriptions.aws.amount', 12] };
+    expect(evaluateConstraint(c('gte', annual, 2640), cashState())).toBe(true);
+    expect(evaluateConstraint(c('gt', annual, 2640), cashState())).toBe(false);
+  });
+
+  test('$var bindings resolve inside expressions (number-preserving)', () => {
+    const withFee = { add: ['subscriptions.aws.amount', '$fee'] };
+    expect(evaluateConstraint(c('gte', withFee, 230), cashState(), { fee: 10 })).toBe(true);
+    expect(evaluateConstraint(c('gte', withFee, 231), cashState(), { fee: 10 })).toBe(false);
+  });
+
+  test('unresolvable ref ⇒ unmet on EITHER polarity — never silently met', () => {
+    const sum = { add: ['subscriptions.aws.amount', 'subscriptions.missing.amount'] };
+    expect(evaluateConstraint(c('lte', sum, 10_000), cashState())).toBe(false);
+    expect(evaluateConstraint(c('gte', sum, 0), cashState())).toBe(false);
+  });
+
+  test('non-number leaf ⇒ unmet (a string amount is evidence of nothing)', () => {
+    const st = { a: { amount: 'not-a-number' }, b: 5 };
+    expect(evaluateConstraint(c('lte', { add: ['a.amount', 'b'] }, 100), st)).toBe(false);
+  });
+
+  test('pm band compares by center value', () => {
+    const est = { pm: 'subscriptions.aws.amount', margin: 30 };
+    expect(evaluateConstraint(c('lte', est, 220), cashState())).toBe(true);
+    expect(evaluateConstraint(c('lte', est, 219), cashState())).toBe(false);
+  });
+
+  test('{fn} throws loud — the standalone evaluator has no function registry', () => {
+    expect(() =>
+      evaluateConstraint(c('lte', { fn: 'approxtokens', arg: 'a' }, 10), {}),
+    ).toThrow(/function registry/);
+  });
+
+  test('arithmetic composes inside and_clause laws', () => {
+    const law = c(
+      'and_clause',
+      c('exists', 'budget.monthly'),
+      c('lte', { add: ['subscriptions.aws.amount', 'subscriptions.github.amount'] }, 'budget.monthly'),
+    );
+    expect(evaluateConstraint(law, cashState())).toBe(true);
+  });
+});
