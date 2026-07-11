@@ -56,6 +56,19 @@ export { withinMax, reachedMin } from './relations';
 // Selection semantics migrated from @console-one/compile's greedy selector
 // (beam/Lagrangian stay archived until measured prices exist).
 export { planView } from './view';
+
+// ─── Selection under prices (R8/R5 — the attention market) ──────────────
+// selectUnderPrices = the standalone Lagrangian selection evaluator,
+// recovered from the archived @console-one/compile selector (observatory
+// TECH-DEBT #6's recorded re-adoption trigger; MAP-ATTENTION-MARKET v1).
+// Flat market: candidates bid value against declared capacities; the
+// DUAL PRICES are first-class output — rising duals ARE saturation, and
+// silence is nothing clearing the price. Greedy/beam ride along as
+// non-pricing baselines.
+export { selectUnderPrices } from './select';
+export type {
+  SelectCandidate, SelectCapacities, SelectOptions, SelectResult,
+} from './select';
 export type {
   ViewSpec, ViewSection, ViewRung, ViewCost, ViewPlan, ViewPick, ViewEviction,
 } from './view';

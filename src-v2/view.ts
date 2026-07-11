@@ -24,9 +24,12 @@
  *     floor; offer a zero-cost rung to make dropping legal. Once the
  *     spend exceeds the cap, every later section falls to its cheapest —
  *     deliberate, single-pass, deterministic, no backtracking.
- * The archived compile package remains the reference for the dormant
- * beam/Lagrangian strategies; they activate here when measured prices
- * (d) exist to feed them — not before.
+ * The dormant beam/Lagrangian strategies are archived no longer: re-cut
+ * 2026-07-11 as the standalone `selectUnderPrices` evaluator (select.ts —
+ * the attention market, MAP-ATTENTION-MARKET v1, is their first consumer;
+ * it needs the dual prices themselves). planView keeps this greedy pass
+ * until a consumer feeds it measured prices — then it binds to select.ts
+ * rather than growing its own.
  */
 
 // ─── The vocabulary ──────────────────────────────────────────────────────
