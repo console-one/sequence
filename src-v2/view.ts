@@ -27,9 +27,25 @@
  * The dormant beam/Lagrangian strategies are archived no longer: re-cut
  * 2026-07-11 as the standalone `selectUnderPrices` evaluator (select.ts —
  * the attention market, MAP-ATTENTION-MARKET v1, is their first consumer;
- * it needs the dual prices themselves). planView keeps this greedy pass
- * until a consumer feeds it measured prices — then it binds to select.ts
- * rather than growing its own.
+ * it needs the dual prices themselves).
+ *
+ * ON BINDING TO select.ts (attempted 2026-07-11, STOPPED — record, so the
+ * unification is not re-attempted naively): the two are different BINDINGS
+ * of the one selection law, not a duplication. planView is exactly-one-per
+ * -section rendering with a FLOOR law (every section renders; over-budget
+ * floor elections are charged and cascade), sequential declaration-order
+ * priority, and no value function. select.ts's re-cut deliberately
+ * flattened compile's per-site exclusivity away (independent in/out bids)
+ * and its contract is the opposite of the floor law: it NEVER over-admits
+ * (repair sheds to feasibility). "At most one, never over budget" cannot
+ * express "exactly one, over budget if needed". An honest unification
+ * needs BOTH: (a) group exclusivity restored in select.ts (one-of-N), and
+ * (b) planView reformulated as floors-admitted-unconditionally + richer
+ * rungs as upgrade bids at DELTA costs — which imposes a new ViewSpec
+ * dominance constraint (richer rungs must cost ≥ the floor per budgeted
+ * dimension, else deltas go negative and select.ts rightly throws). Both
+ * are design changes to snapshot-pinned surfaces; do them deliberately at
+ * the seam where a render actually needs PRICED selection, or not at all.
  */
 
 // ─── The vocabulary ──────────────────────────────────────────────────────
