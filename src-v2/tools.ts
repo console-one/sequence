@@ -16,6 +16,10 @@
  * onto this interface.
  */
 
+import * as nodeFs from 'node:fs';
+import * as nodePath from 'node:path';
+import { spawn } from 'node:child_process';
+
 import { FT } from '../src/builder';
 import type { Sequence } from './sequence';
 
@@ -115,6 +119,103 @@ export function registerFs(seq: Sequence, storage: ToolStorage): void {
   }));
 }
 
+/** `fsnode.*` — REAL filesystem primitives (distinct from the storage-key
+ *  `fs.*` above): the irreducible edge a transcript-source connector needs
+ *  — enumerate files, offset-advancing tail, stat for change detection.
+ *  "Watching" is NOT a primitive: it is polling on the clock (schedule.at
+ *  / the host wake loop) over these three — no setInterval in a tool.
+ *  These are the seam-B′ transports the connector maps named MISSING. */
+export function registerFsNode(seq: Sequence): void {
+  register(seq, 'fsnode.list', (input: unknown) => {
+    const { dir, ext, recursive = true } = (input ?? {}) as { dir: string; ext?: string; recursive?: boolean };
+    if (typeof dir !== 'string') throw new Error('fsnode.list: dir must be a string');
+    const out: string[] = [];
+    const walk = (d: string): void => {
+      let entries: nodeFs.Dirent[];
+      try { entries = nodeFs.readdirSync(d, { withFileTypes: true }); } catch { return; }
+      for (const e of entries) {
+        const full = nodePath.join(d, e.name);
+        if (e.isDirectory()) { if (recursive) walk(full); }
+        else if (!ext || e.name.endsWith(ext)) out.push(full);
+      }
+    };
+    walk(dir);
+    return { files: out.sort() };
+  }, FT.fn({
+    input: FT.object({ dir: FT.string(), 'ext?': FT.string(), 'recursive?': FT.boolean() }),
+    output: FT.object({ files: FT.array(FT.string()) }),
+    description: 'list files under a real directory, optionally by extension (recursive by default)',
+  }));
+
+  register(seq, 'fsnode.stat', (input: unknown) => {
+    const { path } = (input ?? {}) as { path: string };
+    if (typeof path !== 'string') throw new Error('fsnode.stat: path must be a string');
+    try {
+      const st = nodeFs.statSync(path);
+      return { exists: true, size: st.size, mtimeMs: st.mtimeMs };
+    } catch {
+      return { exists: false, size: 0, mtimeMs: 0 };
+    }
+  }, FT.fn({
+    input: FT.object({ path: FT.string() }),
+    output: FT.object({ exists: FT.boolean(), size: FT.number(), mtimeMs: FT.number() }),
+    description: 'stat a real file — existence, size, mtime (for change detection)',
+  }));
+
+  register(seq, 'fsnode.tail', (input: unknown) => {
+    const { path, offset = 0 } = (input ?? {}) as { path: string; offset?: number };
+    if (typeof path !== 'string') throw new Error('fsnode.tail: path must be a string');
+    let size = 0;
+    try { size = nodeFs.statSync(path).size; } catch { return { content: '', offset: 0, eof: 0 }; }
+    // Truncation guard: if the file shrank below the offset, restart.
+    const from = offset > size ? 0 : offset;
+    if (from >= size) return { content: '', offset: size, eof: size };
+    const length = size - from;
+    const buf = Buffer.alloc(length);
+    const fd = nodeFs.openSync(path, 'r');
+    try { nodeFs.readSync(fd, buf, 0, length, from); } finally { nodeFs.closeSync(fd); }
+    return { content: buf.toString('utf8'), offset: size, eof: size };
+  }, FT.fn({
+    input: FT.object({ path: FT.string(), 'offset?': FT.number() }),
+    output: FT.object({ content: FT.string(), offset: FT.number(), eof: FT.number() }),
+    description: 'read a real file from a byte offset to EOF, returning the new offset (offset-advancing tail)',
+  }));
+}
+
+/** `proc.exec` — run a subprocess and collect its output. The general
+ *  edge for CLI-shaped connectors (Codex/Gemini/gh/…) exactly as
+ *  http.fetch is the edge for REST: render a descriptor {cmd,args,stdin},
+ *  hand it to the effect, decode {stdout,stderr,code}. Arbitrary command
+ *  execution is a categorically large grant — a manifest DECLARES this
+ *  import so it is visible at install (the consent surface). */
+export function registerProc(seq: Sequence): void {
+  register(seq, 'proc.exec', (input: unknown) => {
+    const { cmd, args = [], stdin, timeoutMs = 120_000, cwd } = (input ?? {}) as {
+      cmd: string; args?: string[]; stdin?: string; timeoutMs?: number; cwd?: string;
+    };
+    if (typeof cmd !== 'string') throw new Error('proc.exec: cmd must be a string');
+    return new Promise((resolve, reject) => {
+      const proc = spawn(cmd, Array.isArray(args) ? args : [], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        ...(cwd ? { cwd } : {}),
+      });
+      let stdout = '';
+      let stderr = '';
+      const timer = setTimeout(() => { proc.kill('SIGKILL'); reject(new Error(`proc.exec: '${cmd}' timed out after ${timeoutMs}ms`)); }, timeoutMs);
+      proc.stdout.on('data', (c) => { stdout += c.toString(); });
+      proc.stderr.on('data', (c) => { stderr += c.toString(); });
+      proc.on('error', (e) => { clearTimeout(timer); reject(e); });
+      proc.on('close', (code) => { clearTimeout(timer); resolve({ stdout, stderr, code: code ?? -1 }); });
+      if (stdin !== undefined) proc.stdin.end(String(stdin), 'utf8');
+      else proc.stdin.end();
+    });
+  }, FT.fn({
+    input: FT.object({ cmd: FT.string(), 'args?': FT.array(FT.string()), 'stdin?': FT.string(), 'timeoutMs?': FT.number(), 'cwd?': FT.string() }),
+    output: FT.object({ stdout: FT.string(), stderr: FT.string(), code: FT.number() }),
+    description: 'run a subprocess (the CLI-connector edge, as http.fetch is the REST edge) — declared as an import for install-time consent',
+  }));
+}
+
 /** `schedule.at` — one-shot deadline binding as pending facts; the host
  *  wake machinery is THE clock (never setInterval in a tool). */
 export function registerSchedule(seq: Sequence): void {
@@ -136,8 +237,13 @@ export function registerSchedule(seq: Sequence): void {
 /** Register the whole base toolset. `storage` optional — without it the
  *  fs.* family is simply absent from the environment (an honest hole,
  *  not a stub). */
-export function registerBaseTools(seq: Sequence, opts: { storage?: ToolStorage } = {}): void {
+export function registerBaseTools(seq: Sequence, opts: { storage?: ToolStorage; realFs?: boolean; proc?: boolean } = {}): void {
   registerHttp(seq);
   registerSchedule(seq);
   if (opts.storage) registerFs(seq, opts.storage);
+  // Real-fs + proc are opt-in: they are large grants (arbitrary file
+  // read, arbitrary command execution). A connector manifest that
+  // imports them makes the grant visible at install.
+  if (opts.realFs) registerFsNode(seq);
+  if (opts.proc) registerProc(seq);
 }
