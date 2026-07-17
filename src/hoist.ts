@@ -177,6 +177,134 @@ export function hoistForReader(tree: Readable, readerName: string): HoistResult 
   return { text: lines.join('\n'), expandTokens };
 }
 
+/* ═══════════════════════════════════════════════════════════════════════
+ * CATALOG HOISTING — the capability frame
+ *
+ * hoist() renders STATE (values, gaps, depth compression). hoistCatalog()
+ * renders the CAPABILITY SURFACE: every fn-typed schema in the tree, as
+ * nested package blocks with named-type extraction — the storylens
+ * `type QueryInput = { … }` / `pkg = { verb { … } }` form. Policy
+ * (per the March hoister): complex/shared input shapes hoist to named
+ * type definitions; simple scalars inline. Descriptions render as `--`
+ * comments (the ft COMMENT token, so the text stays tokenizer-safe).
+ *
+ * Deliberately walks keys()+rawTypeAt — NOT gaps(): gaps() computes
+ * tool-resolution across the whole set and is superlinear on a large
+ * flat catalog.
+ * ═══════════════════════════════════════════════════════════════════ */
+
+export type CatalogOptions = {
+  /** Inline an input object when its one-line form is at most this long
+   *  AND the shape is not shared; otherwise hoist to a named type.
+   *  Default 60. */
+  inlineLimit?: number;
+};
+
+type CatalogEntry = { path: string; segments: string[]; type: Type };
+
+/** `content.get` → `ContentGetInput` */
+function inputTypeName(path: string): string {
+  return (
+    path
+      .split('.')
+      .map(s => s.replace(/(?:^|[-_])(\w)/g, (_, c: string) => c.toUpperCase()))
+      .join('') + 'Input'
+  );
+}
+
+export function hoistCatalog(tree: Readable, opts: CatalogOptions = {}): HoistResult {
+  const inlineLimit = opts.inlineLimit ?? 60;
+
+  // 1. Collect every fn-typed path (the mounted capability surface).
+  const entries: CatalogEntry[] = [];
+  const walk = (prefix: string): void => {
+    for (const key of tree.keys(prefix || undefined)) {
+      if (key.startsWith('_')) continue;
+      const path = prefix ? `${prefix}.${key}` : key;
+      const type = tree.rawTypeAt(path);
+      if (type?.kind === 'fn') entries.push({ path, segments: path.split('.'), type });
+      walk(path);
+    }
+  };
+  walk('');
+  entries.sort((a, b) => a.path.localeCompare(b.path));
+
+  // 2. Named-type extraction. Structural key = the rendered one-line form;
+  //    identical shapes share one name (first use wins). A shape hoists
+  //    when shared (used ≥2×) or too long to inline.
+  const shapeUses = new Map<string, number>();
+  const paramOf = (t: Type): Type | undefined => constraintOf(t, 'param')?.args[0] as Type | undefined;
+  for (const e of entries) {
+    const p = paramOf(e.type);
+    if (!p) continue;
+    const rendered = renderTypeFt(p);
+    if (rendered === '{}') continue;
+    shapeUses.set(rendered, (shapeUses.get(rendered) ?? 0) + 1);
+  }
+  const namedByShape = new Map<string, string>();
+  const typeDefs: string[] = [];
+  const signatureFor = (e: CatalogEntry): string => {
+    const p = paramOf(e.type);
+    if (!p) return '{}';
+    const rendered = renderTypeFt(p);
+    if (rendered === '{}') return '{}';
+    const shared = (shapeUses.get(rendered) ?? 0) >= 2;
+    const long = rendered.includes('\n') || rendered.length > inlineLimit;
+    if (!shared && !long) return rendered;
+    let name = namedByShape.get(rendered);
+    if (!name) {
+      name = inputTypeName(e.path);
+      namedByShape.set(rendered, name);
+      typeDefs.push(`type ${name} = ${rendered}`);
+    }
+    return name;
+  };
+
+  // 3. Emit nested package blocks. Group by leading segments; a verb that
+  //    is both a leaf and a package (`cash` + `cash.add`) renders its leaf
+  //    line first, then its block.
+  const lines: string[] = [];
+  const describe = (t: Type): string => {
+    const d = (t.meta as { description?: string } | undefined)?.description;
+    return d ? `  -- ${d}` : '';
+  };
+  const emitLeaf = (e: CatalogEntry, name: string, indent: string): void => {
+    lines.push(`${indent}${name} ${signatureFor(e)}${describe(e.type)}`);
+  };
+  const byPrefix = (prefix: string): CatalogEntry[] =>
+    entries.filter(e => (prefix ? e.path === prefix || e.path.startsWith(prefix + '.') : true));
+  const emitGroup = (prefix: string, depth: number): void => {
+    const indent = '  '.repeat(depth);
+    const heads = new Map<string, CatalogEntry[]>();
+    for (const e of byPrefix(prefix)) {
+      if (e.path === prefix) continue;
+      const head = e.segments[depth];
+      const group = heads.get(head) ?? [];
+      group.push(e);
+      heads.set(head, group);
+    }
+    for (const [head, group] of [...heads.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+      const childPrefix = prefix ? `${prefix}.${head}` : head;
+      // A path can be BOTH a callable leaf and a package (`cash` +
+      // `cash.add`): the leaf line renders first, then the block.
+      const selfEntry = group.find(e => e.path === childPrefix);
+      const hasChildren = group.some(e => e.path !== childPrefix);
+      if (selfEntry) emitLeaf(selfEntry, head, indent);
+      if (hasChildren) {
+        lines.push(`${indent}${head} = {`);
+        emitGroup(childPrefix, depth + 1);
+        lines.push(`${indent}}`);
+      }
+    }
+  };
+  emitGroup('', 0);
+
+  const text = [typeDefs.join('\n'), lines.join('\n')]
+    .filter(s => s.length > 0)
+    .join('\n\n');
+  return { text, expandTokens: [] };
+}
+
 function emitPath(
   tree: Readable, path: string, displayPath: string,
   currentDepth: number, maxDepth: number,
