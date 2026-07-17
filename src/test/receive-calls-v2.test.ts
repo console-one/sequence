@@ -72,4 +72,37 @@ describe('receiveCalls (v2)', () => {
     expect(r.errors).toEqual([]);
     expect(seq.get('greeting')).toBe('hello');
   });
+
+  test('DEFINES a command as data: register, call, and it types into the frame', async () => {
+    const seq = officeLike();
+    const def = await receiveCalls(seq, [
+      'twice = (n: number) -> [',
+      '  r = sum({ a: n, b: n })',
+      ']',
+    ].join('\n'));
+    expect(def.errors).toEqual([]);
+    expect(def.outcomes[0].defined).toBe(true);
+    // The definition is callable immediately, through the same dispatch.
+    const call = await receiveCalls(seq, 'x = twice({ n: 21 })');
+    expect(call.errors).toEqual([]);
+    expect(seq.get('x')).toEqual({ r: 42 });
+    // And it is a typed name in the environment — it appears in the frame.
+    expect(seq.rawTypeAt('twice')?.kind).toBe('fn');
+  });
+
+  test('defined fns compose: a definition calling a definition', async () => {
+    const seq = officeLike();
+    await receiveCalls(seq, 'double = (n: number) -> [ r = sum({ a: n, b: n }) ]');
+    await receiveCalls(seq, 'quad = (n: number) -> [ d = double({ n: n }) ]');
+    const r = await receiveCalls(seq, 'y = quad({ n: 10 })');
+    expect(r.errors).toEqual([]);
+    expect(seq.get('y')).toEqual({ d: { r: 20 } });
+  });
+
+  test('missing required param is a typed error naming the fn and param', async () => {
+    const seq = officeLike();
+    await receiveCalls(seq, 'twice = (n: number) -> [ r = sum({ a: n, b: n }) ]');
+    const r = await receiveCalls(seq, 'x = twice({})');
+    expect(r.errors[0]).toContain("twice: param 'n' is required");
+  });
 });

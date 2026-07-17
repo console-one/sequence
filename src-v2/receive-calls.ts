@@ -22,7 +22,9 @@
  */
 
 import { parse } from '../src/dsl/parser';
-import type { Statement, Expr } from '../src/dsl/ast';
+import type { Statement, Expr, FunctionExpr } from '../src/dsl/ast';
+import { FT } from '../src/builder';
+import type { Type } from '../src/type';
 import type { Sequence, InsertResult } from './sequence';
 
 export type CallOutcome = {
@@ -34,6 +36,9 @@ export type CallOutcome = {
   value: unknown;
   /** The kernel's insert result for the bind. */
   insert: InsertResult;
+  /** True when this statement DEFINED a function (registered an impl +
+   *  inserted its type) rather than executing one. */
+  defined?: boolean;
 };
 
 export type ReceiveCallsResult = {
@@ -43,43 +48,107 @@ export type ReceiveCallsResult = {
   errors: string[];
 };
 
+/** Local bindings visible inside a fn body (params + body binds).
+ *  Names resolve here FIRST, then fall through to the Sequence. */
+type Scope = Map<string, unknown>;
+
 /** Evaluate an argument expression to a VALUE. The subset is literals,
- *  objects, arrays, name reads (seq.get), and nested calls (awaited).
- *  Anything else is a typed error naming the unsupported kind. */
-async function evalArg(seq: Sequence, expr: Expr): Promise<unknown> {
+ *  objects, arrays, name reads (scope first, then seq.get), and nested
+ *  calls (awaited). Anything else is a typed error naming the kind. */
+async function evalArg(seq: Sequence, expr: Expr, scope?: Scope): Promise<unknown> {
   switch (expr.kind) {
     case 'literal':
       return expr.value;
     case 'object': {
       const out: Record<string, unknown> = {};
-      for (const p of expr.properties) out[p.key] = await evalArg(seq, p.value);
+      for (const p of expr.properties) out[p.key] = await evalArg(seq, p.value, scope);
       return out;
     }
     case 'array': {
       if (!expr.elements) return [];
       const out: unknown[] = [];
       for (const el of expr.elements) {
-        const v = await evalArg(seq, el.expr);
+        const v = await evalArg(seq, el.expr, scope);
         if (el.spread && Array.isArray(v)) out.push(...v);
         else out.push(v);
       }
       return out;
     }
     case 'name':
+      if (scope?.has(expr.name)) return scope.get(expr.name);
       return seq.get(expr.name);
     case 'call':
-      return invokeCall(seq, expr.fn, expr.args);
+      return invokeCall(seq, expr.fn, expr.args, scope);
     default:
       throw new Error(`unsupported argument expression: ${expr.kind}`);
   }
 }
 
-async function invokeCall(seq: Sequence, fn: string, argExprs: Expr[]): Promise<unknown> {
+async function invokeCall(seq: Sequence, fn: string, argExprs: Expr[], scope?: Scope): Promise<unknown> {
   const impl = seq.impls.get(fn);
   if (!impl) throw new Error(`no implementation registered at '${fn}'`);
   const args: unknown[] = [];
-  for (const a of argExprs) args.push(await evalArg(seq, a));
+  for (const a of argExprs) args.push(await evalArg(seq, a, scope));
   return await impl(...args);
+}
+
+/** `counters.{name}` → `counters.alice` — path segments interpolate from
+ *  the fn scope (the dsl's `{var}` convention, fn-body.test.ts). */
+function interpolatePath(path: string, scope: Scope): string {
+  return path.replace(/\{(\w+)\}/g, (_, v: string) =>
+    scope.has(v) ? String(scope.get(v)) : `{${v}}`,
+  );
+}
+
+/** A minimal type-expression → Type mapping for fn param annotations.
+ *  Primitives map exactly; anything richer degrades to a bare object —
+ *  honest (the frame shows `{}`), refined later, never wrong. */
+function typeExprToFT(t: Expr): Type {
+  if (t.kind === 'primitive') {
+    switch (t.base) {
+      case 'string': return FT.string();
+      case 'number': return FT.number();
+      case 'boolean': return FT.boolean();
+      case 'null': return FT.null();
+    }
+  }
+  return FT.object();
+}
+
+/** DEFINE a function from `name = (params) -> [ body ]`: register an
+ *  impl that executes the body statements in a local scope (params +
+ *  body binds; the block's compiled state IS the return value, per the
+ *  ast.ts contract), and insert the fn TYPE at the path so the
+ *  definition appears in the hoisted frame like any built-in. */
+function defineFn(seq: Sequence, path: string, fnExpr: FunctionExpr): InsertResult {
+  const params = fnExpr.params;
+  seq.impls.set(path, async (argsIn: unknown) => {
+    const args = (argsIn ?? {}) as Record<string, unknown>;
+    const scope: Scope = new Map();
+    for (const p of params) {
+      if (!p.optional && args[p.name] === undefined) {
+        throw new Error(`${path}: param '${p.name}' is required`);
+      }
+      scope.set(p.name, args[p.name]);
+    }
+    const locals: Record<string, unknown> = {};
+    for (const stmt of fnExpr.body ?? []) {
+      if (stmt.kind === 'comment') continue;
+      if (stmt.kind !== 'assign') {
+        throw new Error(`${path}: unsupported body statement '${stmt.kind}' in the call subset`);
+      }
+      const bindPath = interpolatePath(stmt.path, scope);
+      const value = await evalArg(seq, stmt.value, scope);
+      scope.set(bindPath, value);
+      locals[bindPath] = value;
+    }
+    return locals;
+  });
+  const shape: Record<string, Type> = {};
+  for (const p of params) {
+    shape[p.optional ? `${p.name}?` : p.name] = typeExprToFT(p.type);
+  }
+  return seq.insert({ path, type: FT.fn({ input: FT.object(shape) }) });
 }
 
 /**
@@ -108,7 +177,11 @@ export async function receiveCalls(seq: Sequence, source: string): Promise<Recei
         continue;
       }
       const expr = stmt.value;
-      if (expr.kind === 'call') {
+      if (expr.kind === 'function' && expr.body) {
+        const insert = defineFn(seq, stmt.path, expr);
+        const sig = expr.params.map((p) => `${p.name}${p.optional ? '?' : ''}`).join(', ');
+        outcomes.push({ path: stmt.path, value: `fn(${sig})`, insert, defined: true });
+      } else if (expr.kind === 'call') {
         const value = await invokeCall(seq, expr.fn, expr.args);
         const insert = seq.insert({ path: stmt.path, value });
         outcomes.push({ path: stmt.path, fn: expr.fn, value, insert });
