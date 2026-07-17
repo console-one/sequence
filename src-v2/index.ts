@@ -171,6 +171,13 @@ export type {
   Outgoing, ForwardHandler,
 } from './stdlib';
 
+// ─── Shared hoist — ONE hoister serves both engines ─────────────────────
+// hoist (state) + hoistCatalog (the capability frame: nested package
+// blocks + named-type extraction) live in ../src/hoist over the Readable
+// interface; v2's Sequence satisfies it via keys()/rawTypeAt().
+export { hoist, hoistCatalog } from '../src/hoist';
+export type { CatalogOptions, Readable } from '../src/hoist';
+
 // ─── Stdlib — reader contracts + hoist + render ─────────────────────────
 export {
   hoistForReader,

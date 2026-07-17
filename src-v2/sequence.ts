@@ -256,6 +256,13 @@ export class Sequence {
     const c = prefix ? this.findCell(prefix) : this.root;
     return c ? [...c.children.keys()] : [];
   }
+  /** Readable conformance (the shared hoist/hoistCatalog in ../src/hoist —
+   *  ONE hoister serves both engines). Same data as childSegments, named
+   *  for the shared interface. */
+  keys(prefix?: string): string[] { return this.childSegments(prefix ?? ''); }
+  /** Readable conformance: the literal type at path. v2 typeAt is already
+   *  raw (no ancestor-ref walk, unlike v1) — an alias, documented as such. */
+  rawTypeAt(path: string): Type | undefined { return this.typeAt(path); }
   now(): number { return this.clock(); }
   nextSequence(): number { return this.nextSeq++; }
 

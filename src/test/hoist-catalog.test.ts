@@ -9,6 +9,7 @@
  */
 
 import { Sequence } from '../sequence';
+import { Sequence as SequenceV2 } from '../../src-v2/sequence';
 import { FT } from '../builder';
 import { hoistCatalog } from '../hoist';
 
@@ -84,6 +85,25 @@ describe('hoistCatalog', () => {
   test('descriptions render as ft comments; empty inputs render {}', () => {
     expect(text).toContain('-- append a note');
     expect(text).toMatch(/ls \{\}/);
+  });
+
+  test('is ENGINE-AGNOSTIC: the same catalog hoists identically from a v2 Sequence', () => {
+    // The deletion directive (Andrew, 2026-07-17): v1 and v2 cannot
+    // rationally co-exist; v2 is THE kernel. One hoister must serve it.
+    const v2 = new SequenceV2();
+    v2.insert({ path: 'content.get', type: FT.fn({
+      input: FT.object({ topicID: FT.string(), contentID: FT.string() }),
+      description: 'read an item',
+    }) });
+    v2.insert({ path: 'content.rm', type: FT.fn({
+      input: FT.object({ topicID: FT.string(), contentID: FT.string() }),
+      description: 'tombstone an item',
+    }) });
+    const out = hoistCatalog(v2).text;
+    expect(out).toContain('type ContentGetInput = { topicID: string, contentID: string }');
+    expect(out).toContain('content = {');
+    expect(out).toMatch(/get ContentGetInput/);
+    expect(out).toMatch(/rm ContentGetInput/);
   });
 
   test('is fast on a wide flat catalog (the gaps() trap does not apply)', () => {
