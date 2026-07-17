@@ -171,6 +171,14 @@ export type {
   Outgoing, ForwardHandler,
 } from './stdlib';
 
+// ─── Base tools + the agent loop (deletion-ledger stage 2) ──────────────
+// Supersede sequenceutils' v1 registrars and agent loop: the base effect
+// primitives and the LLM-operates-the-environment loop, on THE kernel.
+export { registerBaseTools, registerHttp, registerFs, registerSchedule } from './tools';
+export type { ToolStorage } from './tools';
+export { agentTick, agentLoop } from './agent-loop';
+export type { LLMCall, TurnRecord, LoopResult } from './agent-loop';
+
 // ─── The ft write side — call execution against seq.impls ───────────────
 // Stage 1 of the v1 deletion ledger: parse ft text (shared dsl parser)
 // and execute the call subset asynchronously against the impls registry.
