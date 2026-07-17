@@ -6,7 +6,7 @@
  * refinement predicates, modifiers (when/while/onBreak/by), and all operators.
  */
 
-import { type Token, type TokenKind } from './tokenizer';
+import { tokenize, type Token, type TokenKind } from './tokenizer';
 import {
   type Statement, type Expr, type Modifiers, type Predicate,
   type ComparisonPredicate, type ConditionExpr, type PrimitiveConstraint,
@@ -1162,7 +1162,11 @@ function flatIntersection(a: Expr, b: Expr): Expr[] {
 
 /** Parse an ft block string into AST statements. */
 export function parse(source: string): Statement[] {
-  const { tokenize } = require('./tokenizer');
+  // Top-level import, NOT a lazy require: the package is ESM
+  // ("type": "module") — `require` does not exist at runtime, which
+  // silently broke this export for every ESM consumer until the
+  // office-eval smoke hit it (2026-07-17). No tokenizer↔parser cycle
+  // exists; the laziness was never needed.
   const tokens = tokenize(source);
   return new Parser(tokens).parseProgram();
 }
