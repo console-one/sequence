@@ -42,6 +42,8 @@ export type LoopResult = {
   /** Why the loop ended: the model converged (nothing applied, no
    *  errors), the turn budget ran out, or the LLM call itself failed. */
   ended: 'converged' | 'budget' | 'llm-error';
+  /** The failing call's error message when ended === 'llm-error'. */
+  llmError?: string;
 };
 
 const SYSTEM_PROMPT =
@@ -54,7 +56,10 @@ const SYSTEM_PROMPT =
   '  y = "literal"                         bind a value\n' +
   '  f = (a: string) -> [ r = g({ x: a }) ]   define a new function\n' +
   'Later statements can reference earlier binds by name.\n' +
-  'When there is nothing further to do, reply with exactly: done';
+  'If the state contains a `goal`, act toward it by calling functions from ' +
+  'the catalog; your statements execute and their results appear in the ' +
+  'next turn’s state. Reply with exactly `done` ONLY when the goal is ' +
+  'accomplished (or no goal exists and nothing needs doing).';
 
 function extractStatements(response: string): string {
   // Tolerate fenced replies despite the instruction; strip fences and a
@@ -118,7 +123,7 @@ export async function agentLoop(
   let priorErrors: string[] = [];
   for (let t = 1; t <= maxTurns; t++) {
     const r = await agentTick(seq, llm, t, priorErrors);
-    if ('llmError' in r) return { turns, ended: 'llm-error' };
+    if ('llmError' in r) return { turns, ended: 'llm-error', llmError: r.llmError };
     turns.push(r);
     if (r.outcomes.length === 0 && r.errors.length === 0) {
       return { turns, ended: 'converged' };
