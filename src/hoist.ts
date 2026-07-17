@@ -273,7 +273,7 @@ export function hoistCatalog(tree: Readable, opts: CatalogOptions = {}): HoistRe
   };
   const byPrefix = (prefix: string): CatalogEntry[] =>
     entries.filter(e => (prefix ? e.path === prefix || e.path.startsWith(prefix + '.') : true));
-  const emitGroup = (prefix: string, depth: number): void => {
+  const emitGroup = (prefix: string, depth: number, out: string[]): void => {
     const indent = '  '.repeat(depth);
     const heads = new Map<string, CatalogEntry[]>();
     for (const e of byPrefix(prefix)) {
@@ -285,24 +285,51 @@ export function hoistCatalog(tree: Readable, opts: CatalogOptions = {}): HoistRe
     }
     for (const [head, group] of [...heads.entries()].sort(([a], [b]) => a.localeCompare(b))) {
       const childPrefix = prefix ? `${prefix}.${head}` : head;
-      // A path can be BOTH a callable leaf and a package (`cash` +
-      // `cash.add`): the leaf line renders first, then the block.
       const selfEntry = group.find(e => e.path === childPrefix);
       const hasChildren = group.some(e => e.path !== childPrefix);
-      if (selfEntry) emitLeaf(selfEntry, head, indent);
+      if (selfEntry) out.push(`${indent}${head} ${signatureFor(selfEntry)}${describe(selfEntry.type)}`);
       if (hasChildren) {
-        lines.push(`${indent}${head} = {`);
-        emitGroup(childPrefix, depth + 1);
-        lines.push(`${indent}}`);
+        out.push(`${indent}${head} = {`);
+        emitGroup(childPrefix, depth + 1, out);
+        out.push(`${indent}}`);
       }
     }
   };
-  emitGroup('', 0);
+  void emitLeaf;
 
-  const text = [typeDefs.join('\n'), lines.join('\n')]
-    .filter(s => s.length > 0)
-    .join('\n\n');
-  return { text, expandTokens: [] };
+  // Per-top-level-head SECTIONS — the frame IS a budgeted view (each
+  // package is one section; the frame renders through the SAME
+  // renderOffers/planView compiler the topic views use). One head's
+  // block, self-contained — mirrors the top-level loop body of emitGroup.
+  const topHeads = new Set(entries.map(e => e.segments[0]));
+  const sections: { id: string; text: string }[] = [];
+  for (const head of [...topHeads].sort()) {
+    const buf: string[] = [];
+    const group = entries.filter(e => e.path === head || e.path.startsWith(head + '.'));
+    const selfEntry = group.find(e => e.path === head);
+    const hasChildren = group.some(e => e.path !== head);
+    if (selfEntry) buf.push(`${head} ${signatureFor(selfEntry)}${describe(selfEntry.type)}`);
+    if (hasChildren) {
+      buf.push(`${head} = {`);
+      emitGroup(head, 1, buf);
+      buf.push(`}`);
+    }
+    if (buf.length) sections.push({ id: head, text: buf.join('\n') });
+  }
+  // typeDefs is populated lazily by signatureFor during the loop above —
+  // prepend the _types section only AFTER the loop has filled it.
+  if (typeDefs.length) sections.unshift({ id: '_types', text: typeDefs.join('\n') });
+
+  const text = sections.map(s => s.text).join('\n\n');
+  return Object.assign({ text, expandTokens: [] as string[] }, { sections });
+}
+
+/** The catalog as SECTIONS — the frame's offer-set. Each top-level
+ *  package (plus `_types`) is one section; office renders these through
+ *  the same renderOffers/planView compiler the topic views use, so the
+ *  frame and a topic view are literally the same render operation. */
+export function hoistCatalogSections(tree: Readable, opts: CatalogOptions = {}): { id: string; text: string }[] {
+  return (hoistCatalog(tree, opts) as unknown as { sections: { id: string; text: string }[] }).sections;
 }
 
 function emitPath(

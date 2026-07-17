@@ -35,7 +35,7 @@ export type { MountEntry, Block, BlockOpts } from './statement';
 export { FT } from './builder';
 
 // Hoist (emit)
-export { hoist, hoistForReader, hoistCatalog } from './hoist';
+export { hoist, hoistForReader, hoistCatalog, hoistCatalogSections } from './hoist';
 export type { CatalogOptions } from './hoist';
 
 // DSL pipeline
