@@ -16,10 +16,12 @@
  * onto this interface.
  */
 
-import * as nodeFs from 'node:fs';
-import * as nodePath from 'node:path';
-import { spawn } from 'node:child_process';
-
+// NO static node-only imports here: this module is re-exported by the
+// v2 index, which browser bundlers consume (office GUI → shared →
+// index). fsnode.*/proc.exec lazy-import node:fs/path/child_process
+// inside their impls (dynamic import — ESM-clean, unlike the require()
+// class c5df66c fixed), so the node edge is paid only where the grant
+// is actually mounted and exercised.
 import { FT } from '../src/builder';
 import type { Sequence } from './sequence';
 
@@ -126,12 +128,14 @@ export function registerFs(seq: Sequence, storage: ToolStorage): void {
  *  / the host wake loop) over these three — no setInterval in a tool.
  *  These are the seam-B′ transports the connector maps named MISSING. */
 export function registerFsNode(seq: Sequence): void {
-  register(seq, 'fsnode.list', (input: unknown) => {
+  register(seq, 'fsnode.list', async (input: unknown) => {
     const { dir, ext, recursive = true } = (input ?? {}) as { dir: string; ext?: string; recursive?: boolean };
     if (typeof dir !== 'string') throw new Error('fsnode.list: dir must be a string');
+    const nodeFs = await import('node:fs');
+    const nodePath = await import('node:path');
     const out: string[] = [];
     const walk = (d: string): void => {
-      let entries: nodeFs.Dirent[];
+      let entries: import('node:fs').Dirent[];
       try { entries = nodeFs.readdirSync(d, { withFileTypes: true }); } catch { return; }
       for (const e of entries) {
         const full = nodePath.join(d, e.name);
@@ -147,9 +151,10 @@ export function registerFsNode(seq: Sequence): void {
     description: 'list files under a real directory, optionally by extension (recursive by default)',
   }));
 
-  register(seq, 'fsnode.stat', (input: unknown) => {
+  register(seq, 'fsnode.stat', async (input: unknown) => {
     const { path } = (input ?? {}) as { path: string };
     if (typeof path !== 'string') throw new Error('fsnode.stat: path must be a string');
+    const nodeFs = await import('node:fs');
     try {
       const st = nodeFs.statSync(path);
       return { exists: true, size: st.size, mtimeMs: st.mtimeMs };
@@ -162,9 +167,10 @@ export function registerFsNode(seq: Sequence): void {
     description: 'stat a real file — existence, size, mtime (for change detection)',
   }));
 
-  register(seq, 'fsnode.tail', (input: unknown) => {
+  register(seq, 'fsnode.tail', async (input: unknown) => {
     const { path, offset = 0 } = (input ?? {}) as { path: string; offset?: number };
     if (typeof path !== 'string') throw new Error('fsnode.tail: path must be a string');
+    const nodeFs = await import('node:fs');
     let size = 0;
     try { size = nodeFs.statSync(path).size; } catch { return { content: '', offset: 0, eof: 0 }; }
     // Truncation guard: if the file shrank below the offset, restart.
@@ -189,11 +195,12 @@ export function registerFsNode(seq: Sequence): void {
  *  execution is a categorically large grant — a manifest DECLARES this
  *  import so it is visible at install (the consent surface). */
 export function registerProc(seq: Sequence): void {
-  register(seq, 'proc.exec', (input: unknown) => {
+  register(seq, 'proc.exec', async (input: unknown) => {
     const { cmd, args = [], stdin, timeoutMs = 120_000, cwd } = (input ?? {}) as {
       cmd: string; args?: string[]; stdin?: string; timeoutMs?: number; cwd?: string;
     };
     if (typeof cmd !== 'string') throw new Error('proc.exec: cmd must be a string');
+    const { spawn } = await import('node:child_process');
     return new Promise((resolve, reject) => {
       const proc = spawn(cmd, Array.isArray(args) ? args : [], {
         stdio: ['pipe', 'pipe', 'pipe'],
