@@ -376,6 +376,29 @@ export function registerCombinators(seq: Sequence): void {
     output: FT.string(),
     description: 'JSON.stringify(v) — the quoted/escaped form of a value',
   }));
+  register(seq, 'list.some', (input: unknown) => {
+    const { items, attr, value } = (input ?? {}) as {
+      items?: unknown[]; attr?: string; value?: unknown;
+    };
+    if (!Array.isArray(items)) return false;
+    if (attr === undefined) return items.length > 0;
+    return items.some(
+      (it) => (it as Record<string, unknown> | null | undefined)?.[attr] === value,
+    );
+  }, FT.fn({
+    input: FT.object({ 'items?': FT.array(FT.any()), 'attr?': FT.string(), 'value?': FT.any() }),
+    output: FT.boolean(),
+    description: 'does any item[attr] equal value (no attr: is the list non-empty) — the content-ls attr/value query shape as a predicate',
+  }));
+  register(seq, 'assert', (input: unknown) => {
+    const { cond, message } = (input ?? {}) as { cond?: unknown; message?: string };
+    if (!cond) throw new Error(message ?? 'assert failed');
+    return true;
+  }, FT.fn({
+    input: FT.object({ 'cond?': FT.any(), 'message?': FT.string() }),
+    output: FT.boolean(),
+    description: 'throw the message when cond is falsy — the typed-error path a definition raises deliberately',
+  }));
 }
 
 /** Register the whole base toolset. `storage` optional — without it the

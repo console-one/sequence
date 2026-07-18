@@ -118,7 +118,65 @@ async function evalArg(seq: Sequence, expr: Expr, scope?: Scope): Promise<unknow
   }
 }
 
+/** SPECIAL FORMS — the conditional-effects unlock (2026-07-18). A
+ *  conditional guarding an EFFECT cannot be an ordinary function under
+ *  eager evaluation (both branches would run — check-then-create becomes
+ *  create-always). When `pick`/`or`/`attempt` are called with a single
+ *  OBJECT-LITERAL argument, the evaluator itself elects: the condition
+ *  evaluates first, then ONLY the chosen branch expression. Results are
+ *  identical to the eager combinators for pure branches (every shipped
+ *  renderer definition is unchanged); effectful branches become safe.
+ *  `attempt({ do, else })` is the same mechanism for the error axis:
+ *  evaluate `do`; on a thrown statement error, evaluate `else` instead
+ *  (mirrors receiveCalls' collect-and-continue philosophy, scoped to an
+ *  expression). Called with a non-literal argument (a bound object),
+ *  pick/or fall through to their value-level impls — already-computed
+ *  values have no evaluation order to elect. attempt has no value-level
+ *  meaning and refuses non-literal args loudly. */
+const SPECIAL_FORMS = new Set(['pick', 'or', 'attempt']);
+const NOT_SPECIAL = Symbol('not-special');
+
+async function evalSpecialForm(
+  seq: Sequence,
+  fn: string,
+  argExprs: Expr[],
+  scope?: Scope,
+): Promise<unknown | typeof NOT_SPECIAL> {
+  if (argExprs.length !== 1 || argExprs[0].kind !== 'object') {
+    if (fn === 'attempt') {
+      throw new Error(
+        "attempt requires literal branches: attempt({ do: <expr>, else: <expr> })",
+      );
+    }
+    return NOT_SPECIAL;
+  }
+  const props = new Map(argExprs[0].properties.map((p) => [p.key, p.value]));
+  const evalProp = async (key: string): Promise<unknown> => {
+    const e = props.get(key);
+    return e === undefined ? undefined : evalArg(seq, e, scope);
+  };
+  if (fn === 'pick') {
+    const cond = await evalProp('cond');
+    return cond ? evalProp('a') : evalProp('b');
+  }
+  if (fn === 'or') {
+    const a = await evalProp('a');
+    if (a !== undefined && a !== null) return a;
+    return evalProp('b');
+  }
+  // attempt
+  try {
+    return await evalProp('do');
+  } catch {
+    return evalProp('else');
+  }
+}
+
 async function invokeCall(seq: Sequence, fn: string, argExprs: Expr[], scope?: Scope): Promise<unknown> {
+  if (SPECIAL_FORMS.has(fn)) {
+    const special = await evalSpecialForm(seq, fn, argExprs, scope);
+    if (special !== NOT_SPECIAL) return special;
+  }
   const impl = seq.impls.get(fn);
   if (!impl) throw new Error(`no implementation registered at '${fn}'`);
   const args: unknown[] = [];

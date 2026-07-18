@@ -165,6 +165,99 @@ describe('receiveCalls (v2)', () => {
     expect(seq.get('b')).toEqual({ r: '18:14 · t1' });
   });
 
+  // ── SPECIAL FORMS — the conditional-effects unlock (2026-07-18):
+  //    pick/or elect lazily over literal branches; attempt is try/else.
+  //    The bar: an unchosen branch's EFFECT never fires. ──────────────
+
+  test('pick with literal branches evaluates ONLY the chosen one (effects safe)', async () => {
+    const seq = officeLike();
+    registerCombinators(seq);
+    const fired: string[] = [];
+    seq.impls.set('effect', async (args: { tag: string }) => {
+      fired.push(args.tag);
+      return { did: args.tag };
+    });
+    const r = await receiveCalls(seq, [
+      'ensure = (have: boolean) -> [',
+      '  r = pick({ cond: have, a: effect({ tag: "kept" }), b: effect({ tag: "created" }) })',
+      ']',
+      'x = ensure({ have: false })',
+      'y = ensure({ have: true })',
+    ].join('\n'));
+    expect(r.errors).toEqual([]);
+    expect(fired).toEqual(['created', 'kept']); // exactly one per call — never both
+    expect(seq.get('x')).toEqual({ r: { did: 'created' } });
+  });
+
+  test('or short-circuits: the fallback effect fires only on nullish', async () => {
+    const seq = officeLike();
+    registerCombinators(seq);
+    let fallbacks = 0;
+    seq.impls.set('fallback', async () => {
+      fallbacks++;
+      return 'computed';
+    });
+    const r = await receiveCalls(seq, [
+      'a = or({ a: "present", b: fallback({}) })',
+      'b = or({ b: fallback({}) })',
+    ].join('\n'));
+    expect(r.errors).toEqual([]);
+    expect(seq.get('a')).toBe('present');
+    expect(seq.get('b')).toBe('computed');
+    expect(fallbacks).toBe(1); // the present case never computed the fallback
+  });
+
+  test('pick/or over BOUND values (non-literal arg) still work via the impls', async () => {
+    const seq = officeLike();
+    registerCombinators(seq);
+    const r = await receiveCalls(seq, [
+      'args = { cond: true, a: "yes", b: "no" }',
+      'x = pick(args)',
+    ].join('\n'));
+    expect(r.errors).toEqual([]);
+    expect(seq.get('x')).toBe('yes');
+  });
+
+  test('attempt: do wins; else runs on a thrown error; errors in else propagate', async () => {
+    const seq = officeLike();
+    registerCombinators(seq);
+    let boomCalls = 0;
+    seq.impls.set('boom', async () => {
+      boomCalls++;
+      throw new Error('boom failed');
+    });
+    const r = await receiveCalls(seq, [
+      'ok = attempt({ do: sum({ a: 40, b: 2 }), else: "unused" })',
+      'saved = attempt({ do: boom({}), else: "recovered" })',
+    ].join('\n'));
+    expect(r.errors).toEqual([]);
+    expect(seq.get('ok')).toBe(42);
+    expect(seq.get('saved')).toBe('recovered');
+    expect(boomCalls).toBe(1);
+    // the compiled race-retry shape: attempt + re-check + assert
+    const rethrow = await receiveCalls(
+      seq,
+      'bad = attempt({ do: boom({}), else: assert({ cond: false, message: "still missing after retry" }) })',
+    );
+    expect(rethrow.errors).toHaveLength(1);
+    expect(rethrow.errors[0]).toContain('still missing after retry');
+  });
+
+  test('list.some — the attr/value membership predicate', async () => {
+    const seq = officeLike();
+    registerCombinators(seq);
+    const r = await receiveCalls(seq, [
+      'types = [{ name: "note" }, { name: "due" }]',
+      'has = list.some({ items: types, attr: "name", value: "note" })',
+      'missing = list.some({ items: types, attr: "name", value: "cash" })',
+      'any = list.some({ items: types })',
+    ].join('\n'));
+    expect(r.errors).toEqual([]);
+    expect(seq.get('has')).toBe(true);
+    expect(seq.get('missing')).toBe(false);
+    expect(seq.get('any')).toBe(true);
+  });
+
   // ── the scalar combinators (seam 3, ledger entries 3+): equality,
   //    presence, arithmetic, string predicates — pure and TOLERANT
   //    (eager evaluation computes unchosen branches too) ──────────────
