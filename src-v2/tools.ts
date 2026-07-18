@@ -360,6 +360,14 @@ export function registerCombinators(seq: Sequence): void {
     output: FT.string(),
     description: 'remove a leading prefix when present, else identity',
   }));
+  register(seq, 'str.padEnd', (input: unknown) => {
+    const { s, width, fill } = (input ?? {}) as { s?: unknown; width?: number; fill?: unknown };
+    return String(s ?? '').padEnd(Number(width ?? 0), String(fill ?? ' '));
+  }, FT.fn({
+    input: FT.object({ s: FT.string(), width: FT.number(), 'fill?': FT.string() }),
+    output: FT.string(),
+    description: 'pad s on the right to width (default fill: space) — column layout as a string op',
+  }));
   register(seq, 'json.encode', (input: unknown) => {
     const { v } = (input ?? {}) as { v?: unknown };
     return JSON.stringify(v);

@@ -224,6 +224,23 @@ describe('receiveCalls (v2)', () => {
     expect(seq.get('e')).toBe('brief');
   });
 
+  test('str.padEnd — right-pad to a column width; overflow is identity', async () => {
+    const seq = officeLike();
+    registerCombinators(seq);
+    const r = await receiveCalls(seq, [
+      'a = str.padEnd({ s: "user-bob", width: 12 })',
+      'b = str.padEnd({ s: "a-name-longer-than-width", width: 8 })',
+      'c = str.padEnd({ s: "x", width: 4, fill: "." })',
+      'd = str.padEnd({})',
+    ].join('\n'));
+    expect(r.errors).toEqual([]);
+    expect(seq.get('a')).toBe('user-bob    ');
+    expect(seq.get('b')).toBe('a-name-longer-than-width');
+    expect(seq.get('c')).toBe('x...');
+    // Tolerance: absent operands never throw (eager unchosen branches).
+    expect(seq.get('d')).toBe('');
+  });
+
   test('json.encode — the quoted/escaped form, and tolerance of absent inputs', async () => {
     const seq = officeLike();
     registerCombinators(seq);
