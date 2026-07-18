@@ -1441,23 +1441,37 @@ export function posteriorPredictive(family: string, params: DistParams): number 
   }
 }
 
-/** Conjugate update: return new hyperparameters after observation. */
+/** Conjugate update: return new hyperparameters after observation.
+ *  `weight` in [0,1] is validity(t) applied to the update — an aged
+ *  observation contributes a decayed fraction of a fresh one (weight 1
+ *  = the classical update). Sufficient statistics scale linearly, so
+ *  this IS the conjugate update, generalized, not a new estimator. */
 export function conjugateUpdate(
   family: string, params: DistParams, observation: 'success' | 'failure' | number,
+  weight = 1,
 ): DistParams {
   switch (family) {
     case 'beta':
-      if (observation === 'success') return { ...params, alpha: (params.alpha ?? 1) + 1 };
-      if (observation === 'failure') return { ...params, beta: (params.beta ?? 1) + 1 };
+      if (observation === 'success') return { ...params, alpha: (params.alpha ?? 1) + weight };
+      if (observation === 'failure') return { ...params, beta: (params.beta ?? 1) + weight };
       return params;
     case 'gamma':
       if (typeof observation === 'number') {
-        return { shape: (params.shape ?? 1) + 1, rate: (params.rate ?? 1) + observation };
+        return { shape: (params.shape ?? 1) + weight, rate: (params.rate ?? 1) + weight * observation };
       }
       return params;
     default:
       return params;
   }
+}
+
+/** The validity(t) weight for evidence aged `ageMs` under an exponential
+ *  half-life: 0.5^(age/halfLife). Non-positive half-life disables decay;
+ *  negative age clamps to 1 (clock skew is not future evidence). */
+export function evidenceDecay(ageMs: number, halfLifeMs: number): number {
+  if (!(halfLifeMs > 0)) return 1;
+  if (ageMs <= 0) return 1;
+  return Math.pow(0.5, ageMs / halfLifeMs);
 }
 
 /** Log-gamma (Lanczos approximation, g=7). */

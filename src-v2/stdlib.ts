@@ -23,7 +23,7 @@ import {
 } from '../src/type';
 import {
   covers, check,
-  cdf, survival, conjugateUpdate, posteriorPredictive,
+  cdf, survival, conjugateUpdate, posteriorPredictive, evidenceDecay,
   type DistParams,
 } from '../src/compose';
 // DEFAULT import (not named): these are node-only auth helpers (HMAC session
@@ -312,7 +312,7 @@ export function concretenessDistribution(
 // into `../src/compose` directly. These are the building blocks used by
 // concretenessDistribution and by future emitters that update beliefs
 // (behavioral predicates, refinement, reliability sub-bucketing).
-export { cdf, survival, posteriorPredictive, conjugateUpdate };
+export { cdf, survival, posteriorPredictive, conjugateUpdate, evidenceDecay };
 export type { DistParams };
 
 // ═══════════════════════════════════════════════════════════════════════

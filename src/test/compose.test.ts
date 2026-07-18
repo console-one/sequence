@@ -570,6 +570,24 @@ describe('distribution CDF evaluation', () => {
     expect(afterFailure.alpha).toBe(2);
     expect(afterFailure.beta).toBe(2);
   });
+
+  test('conjugateUpdate with evidence weight — validity(t) on the update', () => {
+    const { conjugateUpdate, evidenceDecay } = require('../compose');
+    // Weight 1 IS the classical update (the default path above).
+    expect(conjugateUpdate('beta', { alpha: 1, beta: 1 }, 'success', 1).alpha).toBe(2);
+    // A half-life-aged success contributes half a success.
+    const w = evidenceDecay(7 * 86_400_000, 7 * 86_400_000);
+    expect(w).toBeCloseTo(0.5, 10);
+    expect(conjugateUpdate('beta', { alpha: 1, beta: 1 }, 'success', w).alpha).toBeCloseTo(1.5, 10);
+    // Gamma: both sufficient statistics scale by the weight.
+    const g = conjugateUpdate('gamma', { shape: 1, rate: 1 }, 4, 0.25);
+    expect(g.shape).toBeCloseTo(1.25, 10);
+    expect(g.rate).toBeCloseTo(2, 10);
+    // Decay edges: fresh = 1; disabled half-life = 1; ancient → 0.
+    expect(evidenceDecay(0, 1000)).toBe(1);
+    expect(evidenceDecay(5000, 0)).toBe(1);
+    expect(evidenceDecay(100 * 86_400_000, 86_400_000)).toBeLessThan(1e-9);
+  });
 });
 
 describe('typeSpecificity — structural constraint measure', () => {

@@ -256,6 +256,7 @@ export {
   survival,
   posteriorPredictive,
   conjugateUpdate,
+  evidenceDecay,
 } from './stdlib';
 export type {
   DistParams,
