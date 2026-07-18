@@ -390,6 +390,20 @@ export function registerCombinators(seq: Sequence): void {
     output: FT.boolean(),
     description: 'does any item[attr] equal value (no attr: is the list non-empty) — the content-ls attr/value query shape as a predicate',
   }));
+  register(seq, 'at', (input: unknown) => {
+    const { v, path } = (input ?? {}) as { v?: unknown; path?: string };
+    if (typeof path !== 'string' || path === '') return v;
+    let cur: unknown = v;
+    for (const seg of path.split('.')) {
+      if (cur === null || typeof cur !== 'object') return undefined;
+      cur = (cur as Record<string, unknown>)[seg];
+    }
+    return cur;
+  }, FT.fn({
+    input: FT.object({ 'v?': FT.any(), 'path?': FT.string() }),
+    output: FT.any(),
+    description: 'value at a dotted path inside v (the deref law as a value-level fn — for call-result expressions, where name-deref cannot reach)',
+  }));
   register(seq, 'assert', (input: unknown) => {
     const { cond, message } = (input ?? {}) as { cond?: unknown; message?: string };
     if (!cond) throw new Error(message ?? 'assert failed');
