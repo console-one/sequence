@@ -19,7 +19,6 @@
   "exclude": [
     "node_modules",
     "dist",
-    "src-v2/env/browser-storage.ts",
     "src-v2/examples",
     "src-v2/examples/**/*",
     "src-v2/test",

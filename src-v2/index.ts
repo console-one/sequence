@@ -179,6 +179,32 @@ export type { ToolStorage } from './tools';
 export { agentTick, agentLoop } from './agent-loop';
 export type { LLMCall, TurnRecord, LoopResult } from './agent-loop';
 
+// ─── Env storage adapters (deletion-ledger stage 3) ─────────────────────
+// The IStorage contract + the three adapters, superseding sequenceutils'
+// transport/env/* for v2-facing consumers (substrate office-space envs).
+// NodeStorage is node-backed but browser-SAFE to export: fs/path are
+// default-imported with call-time property access (see env/storage.ts),
+// so browser bundles load the module and only throw if one is built.
+export type { IStorage } from './env/storage';
+export { NodeStorage } from './env/storage';
+export { BrowserStorage, resetAllBrowserStorage } from './env/browser-storage';
+export type { BrowserStorageConfig } from './env/browser-storage';
+export { S3Storage, resetAllS3Buckets } from './env/s3-storage';
+export type { S3StorageConfig } from './env/s3-storage';
+
+// ─── Session auth tokens (stdlib — HMAC identity assertions) ────────────
+// The pure primitives (mint/validate/secret) + the cap wiring. Supersede
+// sequenceutils' transport/auth.ts primitive half for v2 consumers; the
+// v1 `registerAuthCaps` (mount-based wiring on the v1 Sequence) stays in
+// sequenceutils until the transport server moves (ledger stage 4).
+export {
+  mintSessionToken,
+  validateSessionToken,
+  generateTokenSecret,
+  installAuthCaps,
+} from './stdlib';
+export type { SessionToken, AuthValidationResult } from './stdlib';
+
 // ─── The ft write side — call execution against seq.impls ───────────────
 // Stage 1 of the v1 deletion ledger: parse ft text (shared dsl parser)
 // and execute the call subset asynchronously against the impls registry.

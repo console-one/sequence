@@ -18,8 +18,18 @@
  * read/write through the normal commitment machinery.
  */
 
-import { promises as fs } from 'fs';
-import { dirname, join, normalize } from 'path';
+// DEFAULT imports (not named): same browser-safety contract as stdlib's
+// `import nodeCrypto from 'crypto'` — a *named* `import { promises } from
+// 'fs'` hard-fails browser bundlers (vite's node-builtin stub has no named
+// exports), which would drag node:fs into every browser consumer of the v2
+// index once this module is exported there. A default import builds
+// everywhere — the browser gets a proxy that only throws IF accessed, and
+// the browser never constructs a NodeStorage — while node sees the real
+// module.
+// Property access is deferred to call time (constructor/methods) — the
+// stub proxy throws on ACCESS, so no module-scope destructuring here.
+import nodeFs from 'fs';
+import nodePath from 'path';
 
 // ═══════════════════════════════════════════════════════════════════════
 // INTERFACE
@@ -69,7 +79,7 @@ export class NodeStorage implements IStorage {
 
   constructor(rootDir: string) {
     // Normalize once so resolvePath's prefix check is reliable.
-    this.rootDir = normalize(rootDir);
+    this.rootDir = nodePath.normalize(rootDir);
     this.cache = new Map();
   }
 
@@ -79,7 +89,7 @@ export class NodeStorage implements IStorage {
    * read/write/delete/list/exists method.
    */
   private resolvePath(key: string): string {
-    const abs = normalize(join(this.rootDir, key));
+    const abs = nodePath.normalize(nodePath.join(this.rootDir, key));
     if (!abs.startsWith(this.rootDir)) {
       throw new Error(`NodeStorage: path traversal outside trusted root: ${key}`);
     }
@@ -88,7 +98,7 @@ export class NodeStorage implements IStorage {
 
   async has(key: string): Promise<boolean> {
     try {
-      await fs.stat(this.resolvePath(key));
+      await nodeFs.promises.stat(this.resolvePath(key));
       return true;
     } catch {
       return false;
@@ -102,21 +112,21 @@ export class NodeStorage implements IStorage {
     if (this.cache.has(key)) {
       const abs = this.resolvePath(key);
       try {
-        await fs.stat(abs);
+        await nodeFs.promises.stat(abs);
         return this.cache.get(key)!;
       } catch {
         this.cache.delete(key);
       }
     }
-    const data = await fs.readFile(this.resolvePath(key), 'utf-8');
+    const data = await nodeFs.promises.readFile(this.resolvePath(key), 'utf-8');
     this.cache.set(key, data);
     return data;
   }
 
   async write(key: string, data: string): Promise<void> {
     const abs = this.resolvePath(key);
-    await fs.mkdir(dirname(abs), { recursive: true });
-    await fs.writeFile(abs, data, 'utf-8');
+    await nodeFs.promises.mkdir(nodePath.dirname(abs), { recursive: true });
+    await nodeFs.promises.writeFile(abs, data, 'utf-8');
     this.cache.set(key, data);
   }
 
@@ -127,7 +137,7 @@ export class NodeStorage implements IStorage {
 
   async delete(key: string): Promise<void> {
     try {
-      await fs.rm(this.resolvePath(key), { recursive: true, force: true });
+      await nodeFs.promises.rm(this.resolvePath(key), { recursive: true, force: true });
     } finally {
       this.cache.delete(key);
     }
@@ -136,7 +146,7 @@ export class NodeStorage implements IStorage {
   async list(prefix: string): Promise<string[]> {
     const dir = this.resolvePath(prefix);
     try {
-      const entries = await fs.readdir(dir);
+      const entries = await nodeFs.promises.readdir(dir);
       return entries.map((name) => (prefix ? `${prefix}/${name}` : name));
     } catch (e: any) {
       if (e?.code === 'ENOENT') return [];
@@ -145,13 +155,13 @@ export class NodeStorage implements IStorage {
   }
 
   async mkdir(dir: string): Promise<void> {
-    await fs.mkdir(this.resolvePath(dir), { recursive: true });
+    await nodeFs.promises.mkdir(this.resolvePath(dir), { recursive: true });
   }
 
   async append(key: string, data: string): Promise<void> {
     const abs = this.resolvePath(key);
-    await fs.mkdir(dirname(abs), { recursive: true });
-    await fs.appendFile(abs, data, 'utf-8');
+    await nodeFs.promises.mkdir(nodePath.dirname(abs), { recursive: true });
+    await nodeFs.promises.appendFile(abs, data, 'utf-8');
     // Appending invalidates any cached full-file read.
     this.cache.delete(key);
   }

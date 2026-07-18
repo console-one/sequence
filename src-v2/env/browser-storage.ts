@@ -19,6 +19,42 @@
 import type { IStorage } from './storage';
 
 // ═══════════════════════════════════════════════════════════════════════
+// MINIMAL IDB TYPES — this package compiles with lib:["ES2022"] (no DOM),
+// because the kernel is environment-neutral. Rather than dragging the DOM
+// lib into every consumer's type environment (or excluding this file from
+// the build, which kept BrowserStorage out of dist entirely), declare the
+// minimal structural slice of the IndexedDB API this backend touches.
+// Runtime is untouched — real browsers supply the real objects.
+// ═══════════════════════════════════════════════════════════════════════
+
+type IDBValidKey = number | string | Date | ArrayBuffer | IDBValidKey[];
+type IDBTransactionMode = 'readonly' | 'readwrite' | 'versionchange';
+interface IDBRequest<T = unknown> {
+  result: T;
+  error: unknown;
+  onsuccess: ((ev?: unknown) => void) | null;
+  onerror: ((ev?: unknown) => void) | null;
+}
+interface IDBOpenDBRequest extends IDBRequest<IDBDatabase> {
+  onupgradeneeded: ((ev?: unknown) => void) | null;
+}
+interface IDBObjectStore {
+  get(key: IDBValidKey): IDBRequest;
+  put(value: unknown, key?: IDBValidKey): IDBRequest<IDBValidKey>;
+  count(key?: IDBValidKey): IDBRequest<number>;
+  delete(key: IDBValidKey): IDBRequest<undefined>;
+  getAllKeys(): IDBRequest<IDBValidKey[]>;
+}
+interface IDBTransaction {
+  objectStore(name: string): IDBObjectStore;
+}
+interface IDBDatabase {
+  objectStoreNames: { contains(name: string): boolean };
+  createObjectStore(name: string): IDBObjectStore;
+  transaction(name: string, mode: IDBTransactionMode): IDBTransaction;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 // BACKENDS
 // ═══════════════════════════════════════════════════════════════════════
 

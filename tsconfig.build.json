@@ -8,8 +8,7 @@
     "src-v2/test",
     "src-v2/test/**/*",
     "src-v2/examples",
-    "src-v2/examples/**/*",
-    "src-v2/env/browser-storage.ts"
+    "src-v2/examples/**/*"
   ],
   "tsc-alias": {
     "resolveFullPaths": true
