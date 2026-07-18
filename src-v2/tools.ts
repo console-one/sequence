@@ -440,6 +440,24 @@ export function registerCombinators(seq: Sequence): void {
     output: FT.any(),
     description: 'value at a dotted path inside v (the deref law as a value-level fn — for call-result expressions, where name-deref cannot reach)',
   }));
+  register(seq, 'num.add', (input: unknown) => {
+    const { a, b } = (input ?? {}) as { a?: number; b?: number };
+    return Number(a ?? 0) + Number(b ?? 0);
+  }, FT.fn({
+    input: FT.object({ 'a?': FT.number(), 'b?': FT.number() }),
+    output: FT.number(),
+    description: 'a + b (absent = 0)',
+  }));
+  register(seq, 'num.max', (input: unknown) => {
+    const { a, b } = (input ?? {}) as { a?: number; b?: number };
+    if (a === undefined || a === null) return b as number;
+    if (b === undefined || b === null) return a;
+    return Math.max(Number(a), Number(b));
+  }, FT.fn({
+    input: FT.object({ 'a?': FT.number(), 'b?': FT.number() }),
+    output: FT.number(),
+    description: 'max(a, b); an absent side yields the other',
+  }));
   register(seq, 'list.find', (input: unknown) => {
     const { items, attr, value } = (input ?? {}) as {
       items?: unknown[]; attr?: string; value?: unknown;
