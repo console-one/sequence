@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Sequence } from '../../src-v2/sequence';
-import { registerBaseTools } from '../../src-v2/tools';
+import { registerBaseTools, registerFsSnapshot } from '../../src-v2/tools';
 import { receiveCalls } from '../../src-v2/receive-calls';
 import { hoistCatalog } from '../hoist';
 
@@ -99,5 +99,35 @@ describe('proc.exec subprocess primitive', () => {
     expect(frame).not.toContain('fsnode');
     expect(frame).not.toContain('proc');
     expect(frame).toContain('http = {');
+  });
+});
+
+describe('fsnode.snapshot — the capture edge', () => {
+  test('itemizes add/modify/delete against a prior snapshot; replayable shape', async () => {
+    const os = await import('node:os');
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'snap-'));
+    fs.writeFileSync(path.join(dir, 'a.txt'), 'one');
+    fs.writeFileSync(path.join(dir, 'b.txt'), 'two');
+    const seq = new Sequence();
+    registerFsSnapshot(seq);
+    const impl = seq.impls.get('fsnode.snapshot')!;
+    const first = (await impl({ dir })) as { snapshot: Record<string, unknown>; changes: Array<{ kind: string; path: string }> };
+    expect(first.changes.map((c) => c.kind)).toEqual(['add', 'add']);
+    // mutate: modify a, delete b, add c
+    fs.writeFileSync(path.join(dir, 'a.txt'), 'one-changed-longer');
+    fs.rmSync(path.join(dir, 'b.txt'));
+    fs.writeFileSync(path.join(dir, 'c.txt'), 'three');
+    const second = (await impl({ dir, prior: first.snapshot })) as { changes: Array<{ kind: string; path: string }> };
+    const kinds = Object.fromEntries(second.changes.map((c) => [path.basename(c.path), c.kind]));
+    expect(kinds['a.txt']).toBe('modify');
+    expect(kinds['b.txt']).toBe('delete');
+    expect(kinds['c.txt']).toBe('add');
+    // quiescent: a re-snapshot against the fresh snapshot reports nothing
+    const secondFull = second as unknown as { snapshot: Record<string, unknown> };
+    const quiet = (await impl({ dir, prior: secondFull.snapshot })) as { changes: unknown[] };
+    expect(quiet.changes).toEqual([]);
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 });

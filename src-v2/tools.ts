@@ -188,6 +188,58 @@ export function registerFsNode(seq: Sequence): void {
   }));
 }
 
+/** `fsnode.snapshot` — the CHANGE edge: stat a directory tree against a
+ *  prior snapshot and return the new snapshot + itemized changes
+ *  (add/modify/delete with size+mtime), timestamped by the caller's
+ *  moment. The diff law lives HERE (one primitive) so capture flows are
+ *  pure data: prior = read stored snapshot → snapshot() → append the
+ *  changes → store the new snapshot; the stored snapshot's VERSION
+ *  HISTORY is the replay stream. Same grant class as fsnode.* (realFs). */
+export function registerFsSnapshot(seq: Sequence): void {
+  register(seq, 'fsnode.snapshot', async (input: unknown) => {
+    const { dir, ext, prior } = (input ?? {}) as {
+      dir: string; ext?: string; prior?: Record<string, { size: number; mtimeMs: number }>;
+    };
+    if (typeof dir !== 'string') throw new Error('fsnode.snapshot: dir must be a string');
+    const nodeFs = await import('node:fs');
+    const nodePath = await import('node:path');
+    const now: Record<string, { size: number; mtimeMs: number }> = {};
+    const walk = (d: string): void => {
+      let entries: import('node:fs').Dirent[];
+      try { entries = nodeFs.readdirSync(d, { withFileTypes: true }); } catch { return; }
+      for (const e of entries) {
+        if (e.name === 'node_modules' || e.name === '.git') continue;
+        const full = nodePath.join(d, e.name);
+        if (e.isDirectory()) { walk(full); continue; }
+        if (ext && !e.name.endsWith(ext)) continue;
+        try {
+          const st = nodeFs.statSync(full);
+          now[full] = { size: st.size, mtimeMs: st.mtimeMs };
+        } catch { /* raced deletion — absent from the snapshot, honestly */ }
+      }
+    };
+    walk(dir);
+    const before = prior ?? {};
+    const changes: Array<{ path: string; kind: 'add' | 'modify' | 'delete'; size?: number; mtimeMs?: number }> = [];
+    for (const [p2, st] of Object.entries(now)) {
+      const old = before[p2];
+      if (!old) changes.push({ path: p2, kind: 'add', size: st.size, mtimeMs: st.mtimeMs });
+      else if (old.size !== st.size || old.mtimeMs !== st.mtimeMs) {
+        changes.push({ path: p2, kind: 'modify', size: st.size, mtimeMs: st.mtimeMs });
+      }
+    }
+    for (const p2 of Object.keys(before)) {
+      if (!now[p2]) changes.push({ path: p2, kind: 'delete' });
+    }
+    changes.sort((a, b) => (a.path < b.path ? -1 : 1));
+    return { snapshot: now, changes, files: Object.keys(now).length };
+  }, FT.fn({
+    input: FT.object({ dir: FT.string(), 'ext?': FT.string(), 'prior?': FT.object() }),
+    output: FT.object({ snapshot: FT.object(), changes: FT.array(FT.any()), files: FT.number() }),
+    description: 'stat-diff a directory tree against a prior snapshot — itemized add/modify/delete; the capture edge (node_modules/.git skipped)',
+  }));
+}
+
 /** `proc.exec` — run a subprocess and collect its output. The general
  *  edge for CLI-shaped connectors (Codex/Gemini/gh/…) exactly as
  *  http.fetch is the edge for REST: render a descriptor {cmd,args,stdin},
@@ -493,6 +545,6 @@ export function registerBaseTools(seq: Sequence, opts: { storage?: ToolStorage; 
   // Real-fs + proc are opt-in: they are large grants (arbitrary file
   // read, arbitrary command execution). A connector manifest that
   // imports them makes the grant visible at install.
-  if (opts.realFs) registerFsNode(seq);
+  if (opts.realFs) { registerFsNode(seq); registerFsSnapshot(seq); }
   if (opts.proc) registerProc(seq);
 }
