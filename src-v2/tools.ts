@@ -272,6 +272,102 @@ export function registerCombinators(seq: Sequence): void {
     output: FT.any(),
     description: 'cond ? a : b — branching as an ordinary call',
   }));
+  // The combinators below are TOLERANT of absent inputs (undefined flows
+  // through JS semantics, never a throw): argument evaluation is eager,
+  // so the unchosen branch of a `pick` is still computed — a combinator
+  // that throws on a hole would break every guarded expression.
+  register(seq, 'eq', (input: unknown) => {
+    const { a, b } = (input ?? {}) as { a?: unknown; b?: unknown };
+    return a === b;
+  }, FT.fn({
+    input: FT.object({ 'a?': FT.any(), 'b?': FT.any() }),
+    output: FT.boolean(),
+    description: 'strict equality (a === b)',
+  }));
+  // Named `present`, not `exists` — `exists` is the dsl's reserved
+  // constraint operator (tokenizer KEYWORDS) and cannot be a call name.
+  register(seq, 'present', (input: unknown) => {
+    const { v } = (input ?? {}) as { v?: unknown };
+    return v !== null && v !== undefined;
+  }, FT.fn({
+    input: FT.object({ 'v?': FT.any() }),
+    output: FT.boolean(),
+    description: 'presence (v is neither null nor undefined) — distinct from truthiness: 0/""/false are present',
+  }));
+  register(seq, 'num.gt', (input: unknown) => {
+    const { a, b } = (input ?? {}) as { a?: number; b?: number };
+    return (a as number) > (b as number);
+  }, FT.fn({
+    input: FT.object({ a: FT.number(), b: FT.number() }),
+    output: FT.boolean(),
+    description: 'a > b (JS comparison; absent operands compare false)',
+  }));
+  register(seq, 'num.round', (input: unknown) => {
+    const { v } = (input ?? {}) as { v?: number };
+    return Math.round(v as number);
+  }, FT.fn({
+    input: FT.object({ v: FT.number() }),
+    output: FT.number(),
+    description: 'Math.round(v)',
+  }));
+  register(seq, 'num.mul', (input: unknown) => {
+    const { a, b } = (input ?? {}) as { a?: number; b?: number };
+    return (a as number) * (b as number);
+  }, FT.fn({
+    input: FT.object({ a: FT.number(), b: FT.number() }),
+    output: FT.number(),
+    description: 'a * b',
+  }));
+  register(seq, 'num.div', (input: unknown) => {
+    const { a, b } = (input ?? {}) as { a?: number; b?: number };
+    return (a as number) / (b as number);
+  }, FT.fn({
+    input: FT.object({ a: FT.number(), b: FT.number() }),
+    output: FT.number(),
+    description: 'a / b (JS semantics: /0 = Infinity — guard with pick where it matters)',
+  }));
+  register(seq, 'str.lower', (input: unknown) => {
+    const { s } = (input ?? {}) as { s?: unknown };
+    return String(s ?? '').toLowerCase();
+  }, FT.fn({
+    input: FT.object({ s: FT.string() }),
+    output: FT.string(),
+    description: 'lowercase',
+  }));
+  register(seq, 'str.startsWith', (input: unknown) => {
+    const { s, prefix } = (input ?? {}) as { s?: unknown; prefix?: unknown };
+    return String(s ?? '').startsWith(String(prefix ?? ''));
+  }, FT.fn({
+    input: FT.object({ s: FT.string(), prefix: FT.string() }),
+    output: FT.boolean(),
+    description: 's starts with prefix',
+  }));
+  register(seq, 'str.endsWith', (input: unknown) => {
+    const { s, suffix } = (input ?? {}) as { s?: unknown; suffix?: unknown };
+    return String(s ?? '').endsWith(String(suffix ?? ''));
+  }, FT.fn({
+    input: FT.object({ s: FT.string(), suffix: FT.string() }),
+    output: FT.boolean(),
+    description: 's ends with suffix',
+  }));
+  register(seq, 'str.stripPrefix', (input: unknown) => {
+    const { s, prefix } = (input ?? {}) as { s?: unknown; prefix?: unknown };
+    const str = String(s ?? '');
+    const pre = String(prefix ?? '');
+    return pre.length > 0 && str.startsWith(pre) ? str.slice(pre.length) : str;
+  }, FT.fn({
+    input: FT.object({ s: FT.string(), prefix: FT.string() }),
+    output: FT.string(),
+    description: 'remove a leading prefix when present, else identity',
+  }));
+  register(seq, 'json.encode', (input: unknown) => {
+    const { v } = (input ?? {}) as { v?: unknown };
+    return JSON.stringify(v);
+  }, FT.fn({
+    input: FT.object({ 'v?': FT.any() }),
+    output: FT.string(),
+    description: 'JSON.stringify(v) — the quoted/escaped form of a value',
+  }));
 }
 
 /** Register the whole base toolset. `storage` optional — without it the

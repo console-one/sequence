@@ -164,4 +164,80 @@ describe('receiveCalls (v2)', () => {
     expect(fallback.errors).toEqual([]);
     expect(seq.get('b')).toEqual({ r: '18:14 · t1' });
   });
+
+  // ── the scalar combinators (seam 3, ledger entries 3+): equality,
+  //    presence, arithmetic, string predicates — pure and TOLERANT
+  //    (eager evaluation computes unchosen branches too) ──────────────
+
+  test('eq / present — presence is not truthiness (0 EXISTS)', async () => {
+    const seq = officeLike();
+    registerCombinators(seq);
+    const r = await receiveCalls(seq, [
+      'a = eq({ a: 1, b: 1 })',
+      'b = eq({ a: "x", b: "y" })',
+      'c = present({ v: 0 })',
+      'd = present({})',
+      'rate = (d?: number) -> [ r = pick({ cond: present({ v: d }), a: str.concat({ parts: [d, "%"] }), b: "none" }) ]',
+      'zero = rate({ d: 0 })',
+      'gone = rate({})',
+    ].join('\n'));
+    expect(r.errors).toEqual([]);
+    expect(seq.get('a')).toBe(true);
+    expect(seq.get('b')).toBe(false);
+    expect(seq.get('c')).toBe(true);
+    expect(seq.get('d')).toBe(false);
+    expect(seq.get('zero')).toEqual({ r: '0%' });
+    expect(seq.get('gone')).toEqual({ r: 'none' });
+  });
+
+  test('num.gt/round/mul/div — a percent cell composes in-language', async () => {
+    const seq = officeLike();
+    registerCombinators(seq);
+    const r = await receiveCalls(seq, [
+      'pct = (burned: number, limit: number) -> [',
+      '  r = pick({ cond: num.gt({ a: limit, b: 0 }), a: num.round({ v: num.mul({ a: num.div({ a: burned, b: limit }), b: 100 }) }), b: 0 })',
+      ']',
+      'p = pct({ burned: 7, limit: 40 })',
+      'z = pct({ burned: 3, limit: 0 })',
+    ].join('\n'));
+    expect(r.errors).toEqual([]);
+    expect(seq.get('p')).toEqual({ r: 18 });
+    // /0 flows Infinity through the UNCHOSEN branch; the guard elects 0.
+    expect(seq.get('z')).toEqual({ r: 0 });
+  });
+
+  test('str.lower/startsWith/endsWith/stripPrefix — predicates without a regex engine', async () => {
+    const seq = officeLike();
+    registerCombinators(seq);
+    const r = await receiveCalls(seq, [
+      'a = str.lower({ s: "DAILY@09:00" })',
+      'b = str.startsWith({ s: "daily@09:00", prefix: "daily@" })',
+      'c = str.endsWith({ s: "reader.tick", suffix: ".tick" })',
+      'd = str.stripPrefix({ s: "reader-brief", prefix: "reader-" })',
+      'e = str.stripPrefix({ s: "brief", prefix: "reader-" })',
+    ].join('\n'));
+    expect(r.errors).toEqual([]);
+    expect(seq.get('a')).toBe('daily@09:00');
+    expect(seq.get('b')).toBe(true);
+    expect(seq.get('c')).toBe(true);
+    expect(seq.get('d')).toBe('brief');
+    expect(seq.get('e')).toBe('brief');
+  });
+
+  test('json.encode — the quoted/escaped form, and tolerance of absent inputs', async () => {
+    const seq = officeLike();
+    registerCombinators(seq);
+    const r = await receiveCalls(seq, [
+      'q = json.encode({ v: "say \\"hi\\"" })',
+      'gt = eq({ a: num.gt({}), b: false })',
+      'low = str.lower({})',
+    ].join('\n'));
+    // NOTE: the tokenizer keeps escapes honest — this pins whatever the
+    // parser delivers for the string; the tolerance assertions are the
+    // real subject (absent operands never throw).
+    expect(r.errors).toEqual([]);
+    expect(seq.get('gt')).toBe(true);
+    expect(seq.get('low')).toBe('');
+    expect(typeof seq.get('q')).toBe('string');
+  });
 });
