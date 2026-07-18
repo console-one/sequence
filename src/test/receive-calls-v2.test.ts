@@ -7,6 +7,7 @@
 
 import { Sequence } from '../../src-v2/sequence';
 import { receiveCalls } from '../../src-v2/receive-calls';
+import { registerCombinators } from '../../src-v2/tools';
 
 function officeLike(): Sequence {
   const seq = new Sequence();
@@ -104,5 +105,63 @@ describe('receiveCalls (v2)', () => {
     await receiveCalls(seq, 'twice = (n: number) -> [ r = sum({ a: n, b: n }) ]');
     const r = await receiveCalls(seq, 'x = twice({})');
     expect(r.errors[0]).toContain("twice: param 'n' is required");
+  });
+
+  // ── property deref on bound objects (the agent-demo t1 gap) ─────────
+
+  test('dotted names deref into a scope-bound object param', async () => {
+    const seq = officeLike();
+    await receiveCalls(seq, 'title = (t: object) -> [ r = sum({ a: t.a, b: t.b }) ]');
+    const r = await receiveCalls(seq, 'x = title({ t: { a: 40, b: 2 } })');
+    expect(r.errors).toEqual([]);
+    expect(seq.get('x')).toEqual({ r: 42 });
+  });
+
+  test('dotted names deref into a top-level bound object (x.items after x = call)', async () => {
+    const seq = officeLike();
+    const r = await receiveCalls(seq, [
+      'x = content.get({ topicID: "t1", contentID: "c9" })',
+      'y = sum({ a: 1, b: 1 })',
+      'z = x.topicID',
+    ].join('\n'));
+    expect(r.errors).toEqual([]);
+    expect(seq.get('z')).toBe('t1');
+  });
+
+  test('deref through nested objects, and a miss stays undefined (never a throw)', async () => {
+    const seq = officeLike();
+    const r = await receiveCalls(seq, [
+      'x = content.get({ topicID: "t1", contentID: "c9" })',
+      'deep = x.body.ok',
+    ].join('\n'));
+    expect(r.errors).toEqual([]);
+    expect(seq.get('deep')).toBe(true);
+    const miss = await receiveCalls(seq, 'gone = x.nosuch.deeper');
+    expect(miss.errors).toEqual([]);
+  });
+
+  // ── combinators: a formatter lives IN the language (seam 3) ─────────
+
+  test('str.concat/or/pick compose into a line-formatter definition', async () => {
+    const seq = officeLike();
+    registerCombinators(seq);
+    const def = await receiveCalls(seq, [
+      'line = (l: object) -> [',
+      '  r = str.concat({ parts: [l.when, " · ", or({ a: l.title, b: l.topicID }), pick({ cond: l.corrected, a: " (corrected)", b: "" })] })',
+      ']',
+    ].join('\n'));
+    expect(def.errors).toEqual([]);
+    const withTitle = await receiveCalls(
+      seq,
+      'a = line({ l: { when: "18:13", title: "Narratives", topicID: "t1", corrected: true } })',
+    );
+    expect(withTitle.errors).toEqual([]);
+    expect(seq.get('a')).toEqual({ r: '18:13 · Narratives (corrected)' });
+    const fallback = await receiveCalls(
+      seq,
+      'b = line({ l: { when: "18:14", topicID: "t1" } })',
+    );
+    expect(fallback.errors).toEqual([]);
+    expect(seq.get('b')).toEqual({ r: '18:14 · t1' });
   });
 });

@@ -174,7 +174,7 @@ export type {
 // ─── Base tools + the agent loop (deletion-ledger stage 2) ──────────────
 // Supersede sequenceutils' v1 registrars and agent loop: the base effect
 // primitives and the LLM-operates-the-environment loop, on THE kernel.
-export { registerBaseTools, registerHttp, registerFs, registerSchedule, registerFsNode, registerProc } from './tools';
+export { registerBaseTools, registerHttp, registerFs, registerSchedule, registerFsNode, registerProc, registerCombinators } from './tools';
 export type { ToolStorage } from './tools';
 export { agentTick, agentLoop } from './agent-loop';
 export type { LLMCall, TurnRecord, LoopResult } from './agent-loop';

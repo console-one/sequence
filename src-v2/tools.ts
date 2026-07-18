@@ -234,12 +234,46 @@ export function registerSchedule(seq: Sequence): void {
   }));
 }
 
+/** Pure value combinators — fallback, branching, and string assembly as
+ *  ordinary calls, so formatter/renderer fn definitions can live IN the
+ *  language (seam 3's flavor templates) instead of compiled per-type
+ *  functions. No effects, no grant: mounted unconditionally. A
+ *  conditional is a call, exactly like everything else — no new syntax. */
+export function registerCombinators(seq: Sequence): void {
+  register(seq, 'str.concat', (input: unknown) => {
+    const { parts } = (input ?? {}) as { parts: unknown[] };
+    if (!Array.isArray(parts)) throw new Error('str.concat: parts must be an array');
+    return parts.filter((p) => p !== undefined && p !== null && p !== '').map(String).join('');
+  }, FT.fn({
+    input: FT.object({ parts: FT.array(FT.any()) }),
+    output: FT.string(),
+    description: 'join parts into one string; null/undefined/empty parts drop',
+  }));
+  register(seq, 'or', (input: unknown) => {
+    const { a, b } = (input ?? {}) as { a?: unknown; b?: unknown };
+    return a ?? b;
+  }, FT.fn({
+    input: FT.object({ 'a?': FT.any(), 'b?': FT.any() }),
+    output: FT.any(),
+    description: 'a when present (non-null), else b',
+  }));
+  register(seq, 'pick', (input: unknown) => {
+    const { cond, a, b } = (input ?? {}) as { cond?: unknown; a?: unknown; b?: unknown };
+    return cond ? a : b;
+  }, FT.fn({
+    input: FT.object({ 'cond?': FT.any(), 'a?': FT.any(), 'b?': FT.any() }),
+    output: FT.any(),
+    description: 'cond ? a : b — branching as an ordinary call',
+  }));
+}
+
 /** Register the whole base toolset. `storage` optional — without it the
  *  fs.* family is simply absent from the environment (an honest hole,
  *  not a stub). */
 export function registerBaseTools(seq: Sequence, opts: { storage?: ToolStorage; realFs?: boolean; proc?: boolean } = {}): void {
   registerHttp(seq);
   registerSchedule(seq);
+  registerCombinators(seq);
   if (opts.storage) registerFs(seq, opts.storage);
   // Real-fs + proc are opt-in: they are large grants (arbitrary file
   // read, arbitrary command execution). A connector manifest that

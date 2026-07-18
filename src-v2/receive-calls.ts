@@ -52,6 +52,41 @@ export type ReceiveCallsResult = {
  *  Names resolve here FIRST, then fall through to the Sequence. */
 type Scope = Map<string, unknown>;
 
+/** Resolve a (possibly dotted) name to a value: exact scope hit, then
+ *  the longest scope-bound prefix with the remainder dereferenced on
+ *  the bound value (`l.title` where `l` is a param), then the cell at
+ *  the full path, then the longest cell-valued prefix + deref (`x.items`
+ *  where a whole object was bound at `x`). Prefix probing reads cells
+ *  via getCell — no access events fire for speculative lookups; only
+ *  the full-path get() is a real read. Unresolvable stays `undefined`
+ *  (the subset's existing contract), never a throw. */
+function derefName(seq: Sequence, name: string, scope?: Scope): unknown {
+  if (scope?.has(name)) return scope.get(name);
+  const segs = name.split('.');
+  const walk = (root: unknown, rest: string[]): unknown => {
+    let v: unknown = root;
+    for (const s of rest) {
+      if (v === null || typeof v !== 'object') return undefined;
+      v = (v as Record<string, unknown>)[s];
+    }
+    return v;
+  };
+  if (scope) {
+    for (let i = segs.length - 1; i >= 1; i--) {
+      const prefix = segs.slice(0, i).join('.');
+      if (scope.has(prefix)) return walk(scope.get(prefix), segs.slice(i));
+    }
+  }
+  const direct = seq.get(name);
+  if (direct !== undefined) return direct;
+  for (let i = segs.length - 1; i >= 1; i--) {
+    const prefix = segs.slice(0, i).join('.');
+    const cell = seq.getCell(prefix);
+    if (cell?.value !== undefined) return walk(cell.value, segs.slice(i));
+  }
+  return undefined;
+}
+
 /** Evaluate an argument expression to a VALUE. The subset is literals,
  *  objects, arrays, name reads (scope first, then seq.get), and nested
  *  calls (awaited). Anything else is a typed error naming the kind. */
@@ -75,8 +110,7 @@ async function evalArg(seq: Sequence, expr: Expr, scope?: Scope): Promise<unknow
       return out;
     }
     case 'name':
-      if (scope?.has(expr.name)) return scope.get(expr.name);
-      return seq.get(expr.name);
+      return derefName(seq, expr.name, scope);
     case 'call':
       return invokeCall(seq, expr.fn, expr.args, scope);
     default:
