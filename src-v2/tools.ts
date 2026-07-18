@@ -390,6 +390,42 @@ export function registerCombinators(seq: Sequence): void {
     output: FT.boolean(),
     description: 'does any item[attr] equal value (no attr: is the list non-empty) — the content-ls attr/value query shape as a predicate',
   }));
+  register(seq, 'curve.parse', (input: unknown) => {
+    const { s } = (input ?? {}) as { s?: string | number };
+    if (typeof s === 'number') {
+      if (!Number.isFinite(s) || s <= 0) throw new Error('curve.parse: must be a positive number');
+      return s;
+    }
+    if (typeof s !== 'string' || !s.trim()) throw new Error('curve.parse: s is required');
+    const t = s.trim();
+    const pm = /^(\d+(?:\.\d+)?)\s*(?:±|\+\-|\+\/-)\s*(\d+(?:\.\d+)?)$/.exec(t);
+    if (pm) {
+      const mean = Number(pm[1]);
+      const sd = Number(pm[2]);
+      if (mean <= 0 || sd <= 0) throw new Error(`curve.parse '${t}': mean and spread must be positive`);
+      // Moment-matched gamma: shape=(m/s)², rate=m/s² — the ONE
+      // m±s reading (parity with the office amount grammar).
+      return { $tv: { fn: 'posteriorPredictive', family: 'gamma', params: { shape: (mean / sd) ** 2, rate: mean / sd ** 2 } } };
+    }
+    if (t.startsWith('{')) {
+      let parsed: unknown;
+      try { parsed = JSON.parse(t); } catch { throw new Error(`curve.parse '${t}' is not valid JSON`); }
+      const tv = (parsed as { $tv?: { fn?: unknown; family?: unknown; params?: unknown } }).$tv;
+      if (!tv || typeof tv.fn !== 'string' || typeof tv.family !== 'string' || typeof tv.params !== 'object') {
+        throw new Error('curve.parse: not a valid $tv envelope ({$tv:{fn,family,params}})');
+      }
+      return parsed;
+    }
+    const n = Number(t);
+    if (!Number.isFinite(n) || n <= 0) {
+      throw new Error(`curve.parse '${t}' is not a positive number, "m±s", or a $tv envelope`);
+    }
+    return n;
+  }, FT.fn({
+    input: FT.object({ s: FT.any() }),
+    output: FT.any(),
+    description: 'the curve LITERAL reader: "220" → scalar (the degenerate curve) · "220±50" → moment-matched gamma $tv envelope · \'{"$tv":…}\' → the envelope verbatim. Types are curves; a planned quantity is this value.',
+  }));
   register(seq, 'at', (input: unknown) => {
     const { v, path } = (input ?? {}) as { v?: unknown; path?: string };
     if (typeof path !== 'string' || path === '') return v;

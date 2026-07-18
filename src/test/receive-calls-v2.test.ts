@@ -243,6 +243,24 @@ describe('receiveCalls (v2)', () => {
     expect(rethrow.errors[0]).toContain('still missing after retry');
   });
 
+  test('curve.parse — the curve literal reader (planned quantities as values)', async () => {
+    const seq = officeLike();
+    registerCombinators(seq);
+    const r = await receiveCalls(seq, [
+      'scalar = curve.parse({ s: "220" })',
+      'band = curve.parse({ s: "220±50" })',
+    ].join('\n'));
+    expect(r.errors).toEqual([]);
+    expect(seq.get('scalar')).toBe(220);
+    const band = seq.get('band') as { $tv: { fn: string; family: string; params: { shape: number; rate: number } } };
+    expect(band.$tv.family).toBe('gamma');
+    // Moment match: shape=(m/s)²=19.36, rate=m/s²=0.088
+    expect(band.$tv.params.shape).toBeCloseTo((220 / 50) ** 2, 10);
+    expect(band.$tv.params.rate).toBeCloseTo(220 / 50 ** 2, 10);
+    const bad = await receiveCalls(seq, 'nope = curve.parse({ s: "-3" })');
+    expect(bad.errors[0]).toContain('not a positive number');
+  });
+
   test('list.some — the attr/value membership predicate', async () => {
     const seq = officeLike();
     registerCombinators(seq);
