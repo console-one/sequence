@@ -440,6 +440,19 @@ export function registerCombinators(seq: Sequence): void {
     output: FT.any(),
     description: 'value at a dotted path inside v (the deref law as a value-level fn — for call-result expressions, where name-deref cannot reach)',
   }));
+  register(seq, 'list.find', (input: unknown) => {
+    const { items, attr, value } = (input ?? {}) as {
+      items?: unknown[]; attr?: string; value?: unknown;
+    };
+    if (!Array.isArray(items) || attr === undefined) return undefined;
+    return items.find(
+      (it) => (it as Record<string, unknown> | null | undefined)?.[attr] === value,
+    );
+  }, FT.fn({
+    input: FT.object({ 'items?': FT.array(FT.any()), 'attr?': FT.string(), 'value?': FT.any() }),
+    output: FT.any(),
+    description: 'the first item whose [attr] equals value, else absent — list.some\'s extracting sibling',
+  }));
   register(seq, 'assert', (input: unknown) => {
     const { cond, message } = (input ?? {}) as { cond?: unknown; message?: string };
     if (!cond) throw new Error(message ?? 'assert failed');

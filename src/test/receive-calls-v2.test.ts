@@ -269,11 +269,15 @@ describe('receiveCalls (v2)', () => {
       'has = list.some({ items: types, attr: "name", value: "note" })',
       'missing = list.some({ items: types, attr: "name", value: "cash" })',
       'any = list.some({ items: types })',
+      'found = list.find({ items: types, attr: "name", value: "due" })',
+      'gone = list.find({ items: types, attr: "name", value: "cash" })',
     ].join('\n'));
     expect(r.errors).toEqual([]);
     expect(seq.get('has')).toBe(true);
     expect(seq.get('missing')).toBe(false);
     expect(seq.get('any')).toBe(true);
+    expect(seq.get('found')).toEqual({ name: 'due' });
+    expect(seq.get('gone')).toBeUndefined();
   });
 
   // ── the scalar combinators (seam 3, ledger entries 3+): equality,
