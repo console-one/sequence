@@ -492,6 +492,15 @@ export function registerCombinators(seq: Sequence): void {
     output: FT.any(),
     description: 'value at a dotted path inside v (the deref law as a value-level fn — for call-result expressions, where name-deref cannot reach)',
   }));
+  register(seq, 'json.decode', (input: unknown) => {
+    const { s } = (input ?? {}) as { s?: string };
+    if (typeof s !== 'string' || !s.trim()) return undefined;
+    try { return JSON.parse(s); } catch { return undefined; }
+  }, FT.fn({
+    input: FT.object({ 's?': FT.string() }),
+    output: FT.any(),
+    description: 'JSON.parse(s); absent/invalid → absent (json.encode\'s tolerant inverse)',
+  }));
   register(seq, 'num.add', (input: unknown) => {
     const { a, b } = (input ?? {}) as { a?: number; b?: number };
     return Number(a ?? 0) + Number(b ?? 0);
