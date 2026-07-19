@@ -23,6 +23,7 @@
 // class c5df66c fixed), so the node edge is paid only where the grant
 // is actually mounted and exercised.
 import { FT } from '../src/builder';
+import type { Type } from '../src/type';
 import type { Sequence } from './sequence';
 
 /** The minimal storage a host injects for fs.* — NodeStorage/Browser/S3
@@ -556,4 +557,101 @@ export function registerBaseTools(seq: Sequence, opts: { storage?: ToolStorage; 
   // imports them makes the grant visible at install.
   if (opts.realFs) { registerFsNode(seq); registerFsSnapshot(seq); }
   if (opts.proc) registerProc(seq);
+}
+
+// ─── Endpoint-qualified tools — the type IS the connector ───────────────
+//
+// endpoint()/auth() (src/type.ts) declare a concrete tool instance:
+// address + HTTP shape + credential path. Until 2026-07-19 they were
+// stored but never executed — the header comment above PROMISED
+// "endpoints compose by type narrowing, never new impls" while every
+// consumer hand-rolled its own template-fill compiler around http.fetch
+// (the office connector build carried ~200 lines of exactly that). This
+// is the ONE generic executor: install an fn type carrying
+// endpoint(url, {method?, headers?, body?}) and the impl derives FROM
+// the type. No per-tool compile step; no second params vocabulary.
+//
+// The fill contract (proven live by the office build it replaces):
+// - `{{arg.x}}` in url/headers: URI-encoded fill from call args.
+// - `{{arg.x}}` in a body template: JSON-encoded fill (string quoted,
+//   number raw, object serialized, missing → null) so the template
+//   stays valid JSON.
+// - `{{secret}}` fills from the resolved credential in url/headers
+//   ONLY — never bodies (bodies are the widest leak surface).
+// - auth(identityPath) resolves through the OPTIONAL `auth.resolve`
+//   impl ({ path } → string | undefined). No resolver or no value =
+//   the provider's unauthenticated tier: a header template that
+//   references {{secret}} is OMITTED entirely (a malformed "Bearer "
+//   401s — caught live 2026-07-17).
+// - Required params are read off the fn type's param constraint: the
+//   type is the validator.
+// - non-2xx throws `path: METHOD → status`; a JSON body parses, any
+//   other body returns { body }.
+
+function fillUri(template: string, args: Record<string, unknown>, secret: string | undefined): string {
+  return template
+    .replace(/\{\{arg\.(\w+)\}\}/g, (_, k: string) => encodeURIComponent(String(args[k] ?? '')))
+    .replace(/\{\{secret\}\}/g, secret ?? '');
+}
+
+function fillBody(template: string, args: Record<string, unknown>): string {
+  return template.replace(/\{\{arg\.(\w+)\}\}/g, (_, k: string) => JSON.stringify(args[k] ?? null));
+}
+
+/** Install one endpoint-qualified fn: insert the type, derive the impl.
+ *  Throws at install on a missing endpoint or a non-http(s) scheme
+ *  (mcp:// etc. are future transports — refusing now beats a dead
+ *  mount). Wrap `seq.impls.get(path)` afterwards for metering/ledgers —
+ *  observation is the host's concern, not the transport's. */
+export function installEndpointTool(seq: Sequence, path: string, type: Type): void {
+  const ep = type.constraints.find((c) => c.op === 'endpoint');
+  if (!ep) throw new Error(`installEndpointTool: ${path} carries no endpoint constraint`);
+  const urlTemplate = ep.args[0] as string;
+  if (!/^https?:\/\//.test(urlTemplate)) {
+    throw new Error(`installEndpointTool: ${path} endpoint scheme unsupported (http/https only): ${urlTemplate}`);
+  }
+  const opts = (ep.args[1] ?? {}) as { method?: string; headers?: Record<string, string>; body?: string };
+  const identityPath = type.constraints.find((c) => c.op === 'auth')?.args[0] as string | undefined;
+  // Required params, read off the fn type's own param constraint.
+  const inputType = type.constraints.find((c) => c.op === 'param')?.args[0] as Type | undefined;
+  const required: string[] = [];
+  for (const c of inputType?.constraints ?? []) {
+    if (c.op === 'property' && !c.args[2]) required.push(c.args[0] as string);
+  }
+
+  seq.insert({ path, type: type as never });
+  seq.impls.set(path, async (argsIn: unknown) => {
+    const args = (argsIn ?? {}) as Record<string, unknown>;
+    for (const k of required) {
+      if (args[k] === undefined) throw new Error(`${path}: param '${k}' is required`);
+    }
+    let secret: string | undefined;
+    if (identityPath) {
+      const resolve = seq.impls.get('auth.resolve');
+      if (resolve) secret = (await resolve({ path: identityPath })) as string | undefined;
+    }
+    const fetchImpl = seq.impls.get('http.fetch');
+    if (!fetchImpl) throw new Error(`${path}: http.fetch transport is not mounted`);
+    const headers: Record<string, string> = {};
+    for (const [h, v] of Object.entries(opts.headers ?? {})) {
+      if (v.includes('{{secret}}') && !secret) continue;
+      const filled = fillUri(v, args, secret);
+      if (filled.trim()) headers[h] = filled;
+    }
+    const method = opts.method ?? 'GET';
+    const res = (await fetchImpl({
+      url: fillUri(urlTemplate, args, secret),
+      method,
+      ...(Object.keys(headers).length ? { headers } : {}),
+      ...(opts.body ? { body: fillBody(opts.body, args) } : {}),
+    })) as { status: number; body: string };
+    if (res.status < 200 || res.status >= 300) {
+      throw new Error(`${path}: ${method} → ${res.status}`);
+    }
+    try {
+      return JSON.parse(res.body);
+    } catch {
+      return { body: res.body };
+    }
+  });
 }

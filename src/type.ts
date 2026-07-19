@@ -633,10 +633,20 @@ export function key(...fields: string[]): Constraint {
  * A function with an endpoint is a concrete tool instance, not a schema.
  * Two functions with different endpoints are different tools (compose → never).
  *
- * @param url — the service endpoint URL or address
+ * The url may carry `{{arg.x}}` placeholders (filled from call args) and
+ * `{{secret}}` (filled from the resolved auth credential — url/headers
+ * only, never bodies). `opts` binds the HTTP shape of the instance:
+ * method, header templates, and a JSON body template. A bare url keeps
+ * `args` as `[url]`, so existing stored constraints compose unchanged.
+ *
+ * @param url — the service endpoint URL or address (template allowed)
+ * @param opts — method / header templates / body template for the instance
  */
-export function endpoint(url: string): Constraint {
-  return { op: 'endpoint', args: [url] };
+export function endpoint(
+  url: string,
+  opts?: { method?: string; headers?: Record<string, string>; body?: string },
+): Constraint {
+  return { op: 'endpoint', args: opts ? [url, opts] : [url] };
 }
 
 /**
