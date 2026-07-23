@@ -684,6 +684,14 @@ export function registerCombinators(seq: Sequence): void {
     output: FT.string(),
     description: 'items joined by sep — str.split\'s inverse',
   }));
+  register(seq, 'list.length', (input: unknown) => {
+    const { items } = (input ?? {}) as { items?: unknown[] };
+    return Array.isArray(items) ? items.length : 0;
+  }, FT.fn({
+    input: FT.object({ 'items?': FT.array(FT.any()) }),
+    output: FT.number(),
+    description: 'items.length (0 for non-lists)',
+  }));
   register(seq, 'obj.fromPairs', (input: unknown) => {
     const { pairs } = (input ?? {}) as { pairs?: Array<{ key?: unknown; value?: unknown }> };
     const out: Record<string, unknown> = {};
