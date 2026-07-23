@@ -453,3 +453,41 @@ describe('list.each (combinator over fn-defs-as-facts)', () => {
     expect(calls).toBe(2);
   });
 });
+
+// ── the doc-put combinator batch ─────────────────────────────────────
+describe('value combinators (doc-put batch)', () => {
+  const mk = () => { const s = new Sequence(); registerCombinatorsForEach(s); return s; };
+  const call = async (s: Sequence, fn: string, args: unknown) => (await receiveCall(s, fn, args)).value;
+
+  test('json.decode tolerant, str.split, list.uniq/compact/concat', async () => {
+    const s = mk();
+    expect(await call(s, 'json.decode', { s: '[1,2]' })).toEqual([1, 2]);
+    expect(await call(s, 'json.decode', { s: 'nope{', fallback: [] })).toEqual([]);
+    expect(await call(s, 'json.decode', { fallback: [] })).toEqual([]);
+    expect(await call(s, 'str.split', { s: 'a/b/c', sep: '/' })).toEqual(['a', 'b', 'c']);
+    expect(await call(s, 'list.uniq', { items: ['t1', 't2', 't1'] })).toEqual(['t1', 't2']);
+    expect(await call(s, 'list.compact', { items: ['w', '', null, undefined, 'x', 0] })).toEqual(['w', 'x', 0]);
+    expect(await call(s, 'list.concat', { lists: [['a'], [], ['b', 'c']] })).toEqual(['a', 'b', 'c']);
+  });
+
+  test('list.diff by key tuple; list.find/some walk dotted attrs; list.max dotted', async () => {
+    const s = mk();
+    const prev = [{ as: 'topic', uri: 't1' }, { as: 'tool', uri: 'x.y' }];
+    const next = [{ as: 'topic', uri: 't1' }];
+    expect(await call(s, 'list.diff', { a: prev, b: next, on: ['as', 'uri'] }))
+      .toEqual([{ as: 'tool', uri: 'x.y' }]);
+    const rows = [{ body: { kind: 'doc' }, contentID: 'c1' }, { body: { kind: 'note' } }];
+    expect(await call(s, 'list.find', { items: rows, attr: 'body.kind', value: 'doc' }))
+      .toEqual({ body: { kind: 'doc' }, contentID: 'c1' });
+    expect(await call(s, 'list.some', { items: rows, attr: 'body.kind', value: 'note' })).toBe(true);
+    const evs = [{ position: { seq: 4 } }, { position: { seq: 9 } }, { position: {} }];
+    expect(await call(s, 'list.max', { items: evs, attr: 'position.seq' })).toBe(9);
+    expect(await call(s, 'list.max', { items: [], attr: 'position.seq' })).toBeUndefined();
+  });
+
+  test('obj.fromPairs builds dynamic-keyed objects', async () => {
+    const s = mk();
+    expect(await call(s, 'obj.fromPairs', { pairs: [{ key: 't1', value: 7 }, { key: 't2' }, { nope: 1 }] }))
+      .toEqual({ t1: 7, t2: undefined });
+  });
+});

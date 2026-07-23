@@ -299,6 +299,18 @@ export function registerSchedule(seq: Sequence): void {
  *  language (seam 3's flavor templates) instead of compiled per-type
  *  functions. No effects, no grant: mounted unconditionally. A
  *  conditional is a call, exactly like everything else — no new syntax. */
+/** Walk a dotted attr path into a value ("body.kind", "position.seq").
+ *  Non-objects along the way yield undefined — the tolerant read every
+ *  list combinator shares. */
+function walkAttr(v: unknown, path: string): unknown {
+  let cur: unknown = v;
+  for (const seg of path.split('.')) {
+    if (cur === null || typeof cur !== 'object') return undefined;
+    cur = (cur as Record<string, unknown>)[seg];
+  }
+  return cur;
+}
+
 export function registerCombinators(seq: Sequence): void {
   register(seq, 'str.concat', (input: unknown) => {
     const { parts } = (input ?? {}) as { parts: unknown[] };
@@ -435,9 +447,7 @@ export function registerCombinators(seq: Sequence): void {
     };
     if (!Array.isArray(items)) return false;
     if (attr === undefined) return items.length > 0;
-    return items.some(
-      (it) => (it as Record<string, unknown> | null | undefined)?.[attr] === value,
-    );
+    return items.some((it) => walkAttr(it, attr) === value);
   }, FT.fn({
     input: FT.object({ 'items?': FT.array(FT.any()), 'attr?': FT.string(), 'value?': FT.any() }),
     output: FT.boolean(),
@@ -547,13 +557,92 @@ export function registerCombinators(seq: Sequence): void {
       items?: unknown[]; attr?: string; value?: unknown;
     };
     if (!Array.isArray(items) || attr === undefined) return undefined;
-    return items.find(
-      (it) => (it as Record<string, unknown> | null | undefined)?.[attr] === value,
-    );
+    return items.find((it) => walkAttr(it, attr) === value);
   }, FT.fn({
     input: FT.object({ 'items?': FT.array(FT.any()), 'attr?': FT.string(), 'value?': FT.any() }),
     output: FT.any(),
-    description: 'the first item whose [attr] equals value, else absent — list.some\'s extracting sibling',
+    description: 'the first item whose [attr] equals value (attr may be a dotted path), else absent — list.some\'s extracting sibling',
+  }));
+  register(seq, 'json.decode', (input: unknown) => {
+    const { s, fallback } = (input ?? {}) as { s?: unknown; fallback?: unknown };
+    if (typeof s !== 'string' || !s.trim()) return fallback;
+    try { return JSON.parse(s); } catch { return fallback; }
+  }, FT.fn({
+    input: FT.object({ 's?': FT.any(), 'fallback?': FT.any() }),
+    output: FT.any(),
+    description: 'JSON.parse(s); absent/invalid input returns `fallback` — the tolerant read of a JSON-encoded field',
+  }));
+  register(seq, 'str.split', (input: unknown) => {
+    const { s, sep } = (input ?? {}) as { s?: unknown; sep?: unknown };
+    return String(s ?? '').split(String(sep ?? ''));
+  }, FT.fn({
+    input: FT.object({ s: FT.string(), sep: FT.string() }),
+    output: FT.array(FT.string()),
+    description: 'String.split — s cut on sep',
+  }));
+  register(seq, 'list.uniq', (input: unknown) => {
+    const { items } = (input ?? {}) as { items?: unknown[] };
+    return Array.isArray(items) ? [...new Set(items)] : [];
+  }, FT.fn({
+    input: FT.object({ 'items?': FT.array(FT.any()) }),
+    output: FT.array(FT.any()),
+    description: 'distinct items, order kept (identity comparison — meant for scalars/keys)',
+  }));
+  register(seq, 'list.compact', (input: unknown) => {
+    const { items } = (input ?? {}) as { items?: unknown[] };
+    return (Array.isArray(items) ? items : []).filter(
+      (v) => v !== null && v !== undefined && v !== '',
+    );
+  }, FT.fn({
+    input: FT.object({ 'items?': FT.array(FT.any()) }),
+    output: FT.array(FT.any()),
+    description: 'drop null/undefined/"" — collect-and-continue loops return "" for success and a message for failure, then compact',
+  }));
+  register(seq, 'list.concat', (input: unknown) => {
+    const { lists } = (input ?? {}) as { lists?: unknown[][] };
+    return (Array.isArray(lists) ? lists : []).flatMap((l) => (Array.isArray(l) ? l : []));
+  }, FT.fn({
+    input: FT.object({ lists: FT.array(FT.array(FT.any())) }),
+    output: FT.array(FT.any()),
+    description: 'concatenate lists in order (non-lists contribute nothing)',
+  }));
+  register(seq, 'list.diff', (input: unknown) => {
+    const { a, b, on } = (input ?? {}) as { a?: unknown[]; b?: unknown[]; on?: string[] };
+    const keys = Array.isArray(on) ? on : [];
+    const keyOf = (it: unknown) => keys.map((k) => String(walkAttr(it, k))).join(' ');
+    const present = new Set((Array.isArray(b) ? b : []).map(keyOf));
+    return (Array.isArray(a) ? a : []).filter((it) => !present.has(keyOf(it)));
+  }, FT.fn({
+    input: FT.object({ 'a?': FT.array(FT.any()), 'b?': FT.array(FT.any()), on: FT.array(FT.string()) }),
+    output: FT.array(FT.any()),
+    description: 'items of a whose `on`-key tuple does not appear in b (set difference by key list — SQL EXCEPT)',
+  }));
+  register(seq, 'list.max', (input: unknown) => {
+    const { items, attr } = (input ?? {}) as { items?: unknown[]; attr?: string };
+    let max: number | undefined;
+    for (const it of Array.isArray(items) ? items : []) {
+      const v = attr === undefined ? it : walkAttr(it, attr);
+      if (typeof v === 'number' && Number.isFinite(v) && (max === undefined || v > max)) max = v;
+    }
+    return max;
+  }, FT.fn({
+    input: FT.object({ 'items?': FT.array(FT.any()), 'attr?': FT.string() }),
+    output: FT.number(),
+    description: 'the largest finite number at [attr] (dotted ok; no attr: the items themselves); absent when none — pair with or() for a default',
+  }));
+  register(seq, 'obj.fromPairs', (input: unknown) => {
+    const { pairs } = (input ?? {}) as { pairs?: Array<{ key?: unknown; value?: unknown }> };
+    const out: Record<string, unknown> = {};
+    for (const p of Array.isArray(pairs) ? pairs : []) {
+      if (p && typeof p === 'object' && typeof (p as { key?: unknown }).key === 'string') {
+        out[(p as { key: string }).key] = (p as { value?: unknown }).value;
+      }
+    }
+    return out;
+  }, FT.fn({
+    input: FT.object({ pairs: FT.array(FT.object()) }),
+    output: FT.object(),
+    description: 'build an object from {key, value} pairs — the dynamic-key construction the literal syntax cannot express',
   }));
   register(seq, 'assert', (input: unknown) => {
     const { cond, message } = (input ?? {}) as { cond?: unknown; message?: string };
