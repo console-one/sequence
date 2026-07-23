@@ -443,6 +443,28 @@ export function registerCombinators(seq: Sequence): void {
     output: FT.boolean(),
     description: 'does any item[attr] equal value (no attr: is the list non-empty) — the content-ls attr/value query shape as a predicate',
   }));
+  register(seq, 'list.each', async (input: unknown) => {
+    const { items, fn, with: extra } = (input ?? {}) as {
+      items?: unknown[]; fn?: string; with?: Record<string, unknown>;
+    };
+    if (typeof fn !== 'string' || fn === '') throw new Error('list.each: fn (a registered definition name) is required');
+    const impl = seq.impls.get(fn);
+    if (!impl) throw new Error(`list.each: no implementation registered at '${fn}'`);
+    const out: unknown[] = [];
+    for (const item of items ?? []) {
+      const args = extra && typeof item === 'object' && item !== null
+        ? { ...extra, ...(item as Record<string, unknown>) }
+        : extra !== undefined && (item === null || typeof item !== 'object')
+          ? { ...extra, item }
+          : item;
+      out.push(await impl(args));
+    }
+    return out;
+  }, FT.fn({
+    input: FT.object({ 'items?': FT.array(FT.any()), fn: FT.string(), 'with?': FT.object() }),
+    output: FT.array(FT.any()),
+    description: 'call the NAMED definition once per item, sequentially, awaiting each — the body is a fn-def-as-fact (a path in the env), never an anonymous expression. Object items pass as the input (merged over `with`); scalar items pass as {…with, item}. Fail-fast: a throw stops the loop (wrap the fn body in attempt for collect-and-continue). Returns the per-item results in order.',
+  }));
   register(seq, 'curve.parse', (input: unknown) => {
     const { s } = (input ?? {}) as { s?: string | number };
     if (typeof s === 'number') {

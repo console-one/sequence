@@ -398,3 +398,58 @@ describe('receiveCall (programmatic surface entry)', () => {
     );
   });
 });
+
+// ── list.each — iteration over a NAMED definition (no special form) ──
+import { registerCombinators as registerCombinatorsForEach } from '../../src-v2/tools';
+
+describe('list.each (combinator over fn-defs-as-facts)', () => {
+  test('calls the named definition per item, in order, merging `with`', async () => {
+    const seq = new Sequence();
+    registerCombinatorsForEach(seq);
+    const seen: unknown[] = [];
+    seq.impls.set('declareOne', async (args: unknown) => {
+      seen.push(args);
+      return (args as { id: string }).id;
+    });
+    const r = await receiveCall(seq, 'list.each', {
+      items: [{ id: 'a' }, { id: 'b' }],
+      fn: 'declareOne',
+      with: { topicID: 't1' },
+    });
+    expect(r.value).toEqual(['a', 'b']);
+    expect(seen).toEqual([
+      { topicID: 't1', id: 'a' },
+      { topicID: 't1', id: 'b' },
+    ]);
+  });
+
+  test('scalar items pass as {…with, item}; unknown fn throws named', async () => {
+    const seq = new Sequence();
+    registerCombinatorsForEach(seq);
+    seq.impls.set('touch', async (args: unknown) => (args as { item: string }).item);
+    const r = await receiveCall(seq, 'list.each', {
+      items: ['x', 'y'],
+      fn: 'touch',
+      with: { k: 1 },
+    });
+    expect(r.value).toEqual(['x', 'y']);
+    await expect(
+      receiveCall(seq, 'list.each', { items: [1], fn: 'missing' }),
+    ).rejects.toThrow("list.each: no implementation registered at 'missing'");
+  });
+
+  test('fail-fast: a throw mid-loop stops and propagates', async () => {
+    const seq = new Sequence();
+    registerCombinatorsForEach(seq);
+    let calls = 0;
+    seq.impls.set('boom', async (args: unknown) => {
+      calls += 1;
+      if (args === 2) throw new Error('item 2 bad'); // no `with`: scalars pass raw
+      return true;
+    });
+    await expect(
+      receiveCall(seq, 'list.each', { items: [1, 2, 3], fn: 'boom' }),
+    ).rejects.toThrow('item 2 bad');
+    expect(calls).toBe(2);
+  });
+});
