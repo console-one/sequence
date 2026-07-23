@@ -208,7 +208,7 @@ export type { SessionToken, AuthValidationResult } from './stdlib';
 // ─── The ft write side — call execution against seq.impls ───────────────
 // Stage 1 of the v1 deletion ledger: parse ft text (shared dsl parser)
 // and execute the call subset asynchronously against the impls registry.
-export { receiveCalls } from './receive-calls';
+export { receiveCalls, receiveCall } from './receive-calls';
 export type { CallOutcome, ReceiveCallsResult } from './receive-calls';
 
 // ─── Shared hoist — ONE hoister serves both engines ─────────────────────

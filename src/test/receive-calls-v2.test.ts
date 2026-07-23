@@ -373,3 +373,28 @@ describe('receiveCalls (v2)', () => {
     expect(typeof seq.get('q')).toBe('string');
   });
 });
+
+// ── receiveCall — the programmatic surface-compiler entry ─────────────
+import { receiveCall } from '../../src-v2/receive-calls';
+
+describe('receiveCall (programmatic surface entry)', () => {
+  test('dispatches a registered impl with structured args and binds the result', async () => {
+    const seq = new Sequence();
+    seq.impls.set('note.add', async (args: unknown) => {
+      const { text } = (args ?? {}) as { text?: string };
+      return { ok: true, echoed: text };
+    });
+    const tricky = 'hello "quoted" \n multi\nline ${weird} \\backslash';
+    const r = await receiveCall(seq, 'note.add', { text: tricky }, 'out');
+    expect(r.fn).toBe('note.add');
+    expect((r.value as { echoed: string }).echoed).toBe(tricky);
+    expect(seq.get('out')).toEqual({ ok: true, echoed: tricky });
+  });
+
+  test('unknown fn throws, naming the path', async () => {
+    const seq = new Sequence();
+    await expect(receiveCall(seq, 'no.such.fn', {})).rejects.toThrow(
+      "no implementation registered at 'no.such.fn'",
+    );
+  });
+});

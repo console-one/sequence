@@ -244,6 +244,29 @@ function defineFn(seq: Sequence, path: string, fnExpr: FunctionExpr): InsertResu
 }
 
 /**
+ * Execute ONE call programmatically — the surface-compiler entry point
+ * (terminal argv / MCP dispatch). A surface that already holds structured
+ * args must not serialize them into ft text just to parse them back
+ * (quoting/escaping of arbitrary user strings is a defect farm); it calls
+ * here instead. Identical semantics to the `call` branch of receiveCalls:
+ * same impl resolution, same result insertion (admission/rules apply to
+ * the output like any other fact). Special forms don't apply — a surface
+ * dispatches real registered fns, never evaluation-order forms.
+ */
+export async function receiveCall(
+  seq: Sequence,
+  fn: string,
+  args?: unknown,
+  bindPath = '_',
+): Promise<CallOutcome> {
+  const impl = seq.impls.get(fn);
+  if (!impl) throw new Error(`no implementation registered at '${fn}'`);
+  const value = await impl(args);
+  const insert = seq.insert({ path: bindPath, value });
+  return { path: bindPath, fn, value, insert };
+}
+
+/**
  * Parse ft `source` and execute its call statements against `seq`.
  * Each successful call binds its result: `x = fn(...)` inserts at `x`;
  * a bare `fn(...)` (parsed as an expression statement where the grammar
