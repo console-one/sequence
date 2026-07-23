@@ -491,3 +491,33 @@ describe('value combinators (doc-put batch)', () => {
       .toEqual({ t1: 7, t2: undefined });
   });
 });
+
+describe('value combinators (correct batch)', () => {
+  const mk = () => { const s = new Sequence(); registerCombinatorsForEach(s); return s; };
+  const call = async (s: Sequence, fn: string, args: unknown) => (await receiveCall(s, fn, args)).value;
+
+  test('obj.keys / is.object / str.join', async () => {
+    const s = mk();
+    expect(await call(s, 'obj.keys', { v: { a: 1, b: 2 } })).toEqual(['a', 'b']);
+    expect(await call(s, 'obj.keys', { v: [1] })).toEqual([]);
+    expect(await call(s, 'is.object', { v: {} })).toBe(true);
+    expect(await call(s, 'is.object', { v: [1] })).toBe(false);
+    expect(await call(s, 'is.object', { v: 'x' })).toBe(false);
+    expect(await call(s, 'str.join', { items: ['a', 'b'], sep: ', ' })).toBe('a, b');
+  });
+
+  test('obj.merge is deep: nested objects merge, scalars/arrays replace', async () => {
+    const s = mk();
+    expect(await call(s, 'obj.merge', {
+      base: { a: 1, nest: { x: 1, y: 2 }, arr: [1, 2] },
+      over: { nest: { y: 9 }, arr: [3] },
+    })).toEqual({ a: 1, nest: { x: 1, y: 9 }, arr: [3] });
+    expect(await call(s, 'obj.merge', { over: { a: 1 } })).toEqual({ a: 1 });
+    expect(await call(s, 'obj.merge', { base: { a: 1 } })).toEqual({ a: 1 });
+  });
+
+  test('list.diff without `on` diffs scalars by identity', async () => {
+    const s = mk();
+    expect(await call(s, 'list.diff', { a: ['x', 'y', 'z'], b: ['y'] })).toEqual(['x', 'z']);
+  });
+});

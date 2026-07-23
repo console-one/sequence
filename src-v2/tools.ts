@@ -608,14 +608,15 @@ export function registerCombinators(seq: Sequence): void {
   }));
   register(seq, 'list.diff', (input: unknown) => {
     const { a, b, on } = (input ?? {}) as { a?: unknown[]; b?: unknown[]; on?: string[] };
-    const keys = Array.isArray(on) ? on : [];
-    const keyOf = (it: unknown) => keys.map((k) => String(walkAttr(it, k))).join(' ');
+    const keys = Array.isArray(on) ? on : null;
+    const keyOf = (it: unknown) =>
+      keys ? keys.map((k) => String(walkAttr(it, k))).join('\u0000') : String(it);
     const present = new Set((Array.isArray(b) ? b : []).map(keyOf));
     return (Array.isArray(a) ? a : []).filter((it) => !present.has(keyOf(it)));
   }, FT.fn({
     input: FT.object({ 'a?': FT.array(FT.any()), 'b?': FT.array(FT.any()), on: FT.array(FT.string()) }),
     output: FT.array(FT.any()),
-    description: 'items of a whose `on`-key tuple does not appear in b (set difference by key list — SQL EXCEPT)',
+    description: 'items of a not present in b — by `on`-key tuple when given (SQL EXCEPT), by scalar identity without',
   }));
   register(seq, 'list.max', (input: unknown) => {
     const { items, attr } = (input ?? {}) as { items?: unknown[]; attr?: string };
@@ -629,6 +630,59 @@ export function registerCombinators(seq: Sequence): void {
     input: FT.object({ 'items?': FT.array(FT.any()), 'attr?': FT.string() }),
     output: FT.number(),
     description: 'the largest finite number at [attr] (dotted ok; no attr: the items themselves); absent when none — pair with or() for a default',
+  }));
+  register(seq, 'list.pluck', (input: unknown) => {
+    const { items, attr } = (input ?? {}) as { items?: unknown[]; attr?: string };
+    if (typeof attr !== 'string' || attr === '') throw new Error('list.pluck: attr is required');
+    return (Array.isArray(items) ? items : []).map((it) => walkAttr(it, attr));
+  }, FT.fn({
+    input: FT.object({ 'items?': FT.array(FT.any()), attr: FT.string() }),
+    output: FT.array(FT.any()),
+    description: 'each item\'s value at [attr] (dotted ok) — how a caller reads the `r` binds out of list.each over a definition (a nested definition returns its full locals)',
+  }));
+  register(seq, 'obj.keys', (input: unknown) => {
+    const { v } = (input ?? {}) as { v?: unknown };
+    return v && typeof v === 'object' && !Array.isArray(v) ? Object.keys(v) : [];
+  }, FT.fn({
+    input: FT.object({ 'v?': FT.any() }),
+    output: FT.array(FT.string()),
+    description: 'Object.keys(v) — [] for anything that is not a plain object',
+  }));
+  register(seq, 'obj.merge', (input: unknown) => {
+    const { base, over } = (input ?? {}) as { base?: unknown; over?: unknown };
+    const isObj = (v: unknown): v is Record<string, unknown> =>
+      v !== null && typeof v === 'object' && !Array.isArray(v);
+    const merge = (b: Record<string, unknown>, o: Record<string, unknown>): Record<string, unknown> => {
+      const out = { ...b };
+      for (const [k, v] of Object.entries(o)) {
+        const cur = out[k];
+        out[k] = isObj(v) && isObj(cur) ? merge(cur, v) : v;
+      }
+      return out;
+    };
+    if (!isObj(base)) return isObj(over) ? over : {};
+    if (!isObj(over)) return base;
+    return merge(base, over);
+  }, FT.fn({
+    input: FT.object({ 'base?': FT.object(), 'over?': FT.object() }),
+    output: FT.object(),
+    description: 'deep merge: over wins per key; nested plain objects merge recursively; arrays/scalars replace — the merge-patch read of a partial update',
+  }));
+  register(seq, 'is.object', (input: unknown) => {
+    const { v } = (input ?? {}) as { v?: unknown };
+    return v !== null && typeof v === 'object' && !Array.isArray(v);
+  }, FT.fn({
+    input: FT.object({ 'v?': FT.any() }),
+    output: FT.boolean(),
+    description: 'is v a plain object (not null, not an array)',
+  }));
+  register(seq, 'str.join', (input: unknown) => {
+    const { items, sep } = (input ?? {}) as { items?: unknown[]; sep?: unknown };
+    return (Array.isArray(items) ? items : []).map(String).join(String(sep ?? ''));
+  }, FT.fn({
+    input: FT.object({ 'items?': FT.array(FT.any()), sep: FT.string() }),
+    output: FT.string(),
+    description: 'items joined by sep — str.split\'s inverse',
   }));
   register(seq, 'obj.fromPairs', (input: unknown) => {
     const { pairs } = (input ?? {}) as { pairs?: Array<{ key?: unknown; value?: unknown }> };
