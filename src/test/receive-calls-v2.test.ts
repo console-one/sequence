@@ -339,6 +339,18 @@ describe('receiveCalls (v2)', () => {
     expect(seq.get('e')).toBe('brief');
   });
 
+  test('str.upper — uppercase, tolerant of absence (str.lower\'s inverse)', async () => {
+    const seq = officeLike();
+    registerCombinators(seq);
+    const r = await receiveCalls(seq, [
+      'a = str.upper({ s: "warn" })',
+      'b = str.upper({})',
+    ].join('\n'));
+    expect(r.errors).toEqual([]);
+    expect(seq.get('a')).toBe('WARN');
+    expect(seq.get('b')).toBe('');
+  });
+
   test('str.padEnd — right-pad to a column width; overflow is identity', async () => {
     const seq = officeLike();
     registerCombinators(seq);

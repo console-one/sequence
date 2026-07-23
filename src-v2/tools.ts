@@ -399,6 +399,14 @@ export function registerCombinators(seq: Sequence): void {
     output: FT.string(),
     description: 'lowercase',
   }));
+  register(seq, 'str.upper', (input: unknown) => {
+    const { s } = (input ?? {}) as { s?: unknown };
+    return String(s ?? '').toUpperCase();
+  }, FT.fn({
+    input: FT.object({ s: FT.string() }),
+    output: FT.string(),
+    description: 'uppercase',
+  }));
   register(seq, 'str.startsWith', (input: unknown) => {
     const { s, prefix } = (input ?? {}) as { s?: unknown; prefix?: unknown };
     return String(s ?? '').startsWith(String(prefix ?? ''));
