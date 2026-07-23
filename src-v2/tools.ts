@@ -649,7 +649,7 @@ export function registerCombinators(seq: Sequence): void {
     description: 'Object.keys(v) — [] for anything that is not a plain object',
   }));
   register(seq, 'obj.merge', (input: unknown) => {
-    const { base, over } = (input ?? {}) as { base?: unknown; over?: unknown };
+    const { base, patch } = (input ?? {}) as { base?: unknown; patch?: unknown };
     const isObj = (v: unknown): v is Record<string, unknown> =>
       v !== null && typeof v === 'object' && !Array.isArray(v);
     const merge = (b: Record<string, unknown>, o: Record<string, unknown>): Record<string, unknown> => {
@@ -660,13 +660,13 @@ export function registerCombinators(seq: Sequence): void {
       }
       return out;
     };
-    if (!isObj(base)) return isObj(over) ? over : {};
-    if (!isObj(over)) return base;
-    return merge(base, over);
+    if (!isObj(base)) return isObj(patch) ? patch : {};
+    if (!isObj(patch)) return base;
+    return merge(base, patch);
   }, FT.fn({
-    input: FT.object({ 'base?': FT.object(), 'over?': FT.object() }),
+    input: FT.object({ 'base?': FT.object(), 'patch?': FT.object() }),
     output: FT.object(),
-    description: 'deep merge: over wins per key; nested plain objects merge recursively; arrays/scalars replace — the merge-patch read of a partial update',
+    description: 'deep merge: patch wins per key; nested plain objects merge recursively; arrays/scalars replace — the merge-patch read of a partial update',
   }));
   register(seq, 'is.object', (input: unknown) => {
     const { v } = (input ?? {}) as { v?: unknown };

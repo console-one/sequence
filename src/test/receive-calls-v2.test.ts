@@ -510,9 +510,9 @@ describe('value combinators (correct batch)', () => {
     const s = mk();
     expect(await call(s, 'obj.merge', {
       base: { a: 1, nest: { x: 1, y: 2 }, arr: [1, 2] },
-      over: { nest: { y: 9 }, arr: [3] },
+      patch: { nest: { y: 9 }, arr: [3] },
     })).toEqual({ a: 1, nest: { x: 1, y: 9 }, arr: [3] });
-    expect(await call(s, 'obj.merge', { over: { a: 1 } })).toEqual({ a: 1 });
+    expect(await call(s, 'obj.merge', { patch: { a: 1 } })).toEqual({ a: 1 });
     expect(await call(s, 'obj.merge', { base: { a: 1 } })).toEqual({ a: 1 });
   });
 
