@@ -42,7 +42,8 @@
     "test": "jest",
     "lint": "tsc --noEmit",
     "prepublishOnly": "npm run clean && npm run build && npm test",
-    "examples": "node examples/run-all.mjs"
+    "examples": "node examples/run-all.mjs",
+    "prepare": "npm run build"
   },
   "keywords": [
     "sequence",
