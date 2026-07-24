@@ -533,3 +533,14 @@ describe('value combinators (correct batch)', () => {
     expect(await call(s, 'list.diff', { a: ['x', 'y', 'z'], b: ['y'] })).toEqual(['x', 'z']);
   });
 });
+
+describe('obj.get — literal-key lookup', () => {
+  test('keys containing dots are NOT walked', async () => {
+    const s = new Sequence();
+    registerCombinatorsForEach(s);
+    const v = { '/a/b/file.jsonl': 42, nested: { x: 1 } };
+    expect((await receiveCall(s, 'obj.get', { v, key: '/a/b/file.jsonl' })).value).toBe(42);
+    expect((await receiveCall(s, 'obj.get', { v, key: 'nested.x' })).value).toBeUndefined();
+    expect((await receiveCall(s, 'obj.get', { v: [1], key: '0' })).value).toBeUndefined();
+  });
+});

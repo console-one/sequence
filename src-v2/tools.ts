@@ -700,6 +700,16 @@ export function registerCombinators(seq: Sequence): void {
     output: FT.number(),
     description: 'items.length (0 for non-lists)',
   }));
+  register(seq, 'obj.get', (input: unknown) => {
+    const { v, key } = (input ?? {}) as { v?: unknown; key?: unknown };
+    if (v === null || typeof v !== 'object' || Array.isArray(v)) return undefined;
+    if (typeof key !== 'string') return undefined;
+    return (v as Record<string, unknown>)[key];
+  }, FT.fn({
+    input: FT.object({ 'v?': FT.object(), key: FT.string() }),
+    output: FT.any(),
+    description: 'v[key] with the key taken LITERALLY (no dotted-path walking) — the lookup for maps keyed by strings that contain dots, like file paths',
+  }));
   register(seq, 'obj.fromPairs', (input: unknown) => {
     const { pairs } = (input ?? {}) as { pairs?: Array<{ key?: unknown; value?: unknown }> };
     const out: Record<string, unknown> = {};
