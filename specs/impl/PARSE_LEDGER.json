@@ -3,7 +3,6 @@
   "capabilities/class-installs.md",
   "capabilities/env-installs.md",
   "capabilities/skill-installs.md",
-  "communities/datatypes.md",
   "converters/http.md",
   "converters/jsonpatch.md",
   "converters/jsonschema.md",
@@ -15,14 +14,10 @@
   "deltat/typetotimeline.md",
   "deltat/typetotype.md",
   "distributedsched/heartbeating.md",
-  "eventeconomics/excelify.md",
-  "eventeconomics/historicals.md",
   "eventeconomics/simulations.md",
-  "languagesemantics/app-layer-semantics.md",
   "languagesemantics/read-state-semantics.md",
   "languagesemantics/write-state-semantics.md",
   "prompts/composition.md",
   "streams/readheadmasking.md",
-  "watchers/debugger.md",
   "watchers/fsm.md"
 ]

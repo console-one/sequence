@@ -597,8 +597,12 @@ export class Parser {
 
     const prim: Expr = { kind: 'primitive', base: base === 'boolean' ? 'boolean' : base, constraints };
 
-    // Check for refinement: | predicate
-    if (this.at('PIPE')) return this.parseRefinement(prim);
+    // Check for refinement: | predicate — but ONLY when the lookahead
+    // actually reads as a predicate. `string | null` in a property is a
+    // UNION; the unconditional refinement-routing here made primitive
+    // unions unparseable in property position (pre-existing, found
+    // 2026-07-24). Non-predicate pipes fall through to the union loop.
+    if (this.at('PIPE') && this.pipeStartsPredicate()) return this.parseRefinement(prim);
 
     return prim;
   }
@@ -612,8 +616,11 @@ export class Parser {
     // Check if this is a scoped block (has import/export/=) or an object type (has :)
     const savedPos = this.pos;
 
-    // Peek ahead to determine block type
-    if (this.at('IMPORT') || this.at('EXPORT') || this.at('CAP') || this.at('DELETE') || this.at('POLICY')) {
+    // Peek ahead to determine block type. POLICY followed by COLON is
+    // the property KEY "policy" (`{ policy: "add-wins" }`), not a
+    // policy statement (2026-07-24).
+    if (this.at('IMPORT') || this.at('EXPORT') || this.at('CAP') || this.at('DELETE')
+      || (this.at('POLICY') && this.tokens[this.pos + 1]?.kind !== 'COLON')) {
       // Definitely a scoped block
       this.pos = savedPos;
       return this.parseBlock();
@@ -672,6 +679,15 @@ export class Parser {
     if (t.kind === 'STRING') return this.advance().value;
     // Bare `*` as a wildcard key
     if (t.kind === 'STAR') { this.advance(); return '*'; }
+    // Dotted keys (`segments.prefix: T`) — consume the whole path.
+    if (t.kind === 'IDENT' && this.tokens[this.pos + 1]?.kind === 'DOT') {
+      let key = this.advance().value;
+      while (this.at('DOT')) {
+        this.advance();
+        key += '.' + this.expect('IDENT').value;
+      }
+      return key;
+    }
     // Keywords are valid property names in object position
     if (t.kind === 'IDENT' || t.kind === 'TYPE' || t.kind === 'WHEN' || t.kind === 'WHILE'
       || t.kind === 'DELETE' || t.kind === 'CAP' || t.kind === 'POLICY' || t.kind === 'BY'
@@ -872,7 +888,13 @@ export class Parser {
       else if (t.kind === 'RBRACE' || t.kind === 'RPAREN') depth--;
       else if (depth === 0 && (t.kind === 'ASSIGN' || t.kind === 'NARROW' || t.kind === 'DELETE'
         || t.kind === 'CAP' || t.kind === 'SPREAD' || t.kind === 'CLASS' || t.kind === 'IMPORT'
-        || t.kind === 'EXPORT' || t.kind === 'POLICY' || t.kind === 'READER' || t.kind === 'WHERE')) {
+        || t.kind === 'EXPORT'
+        // POLICY/READER followed by COLON is a property KEY named
+        // "policy"/"reader", not a statement — `{ policy: "add-wins" }`
+        // must stay an object (2026-07-24).
+        || (t.kind === 'POLICY' && this.tokens[i + 1]?.kind !== 'COLON')
+        || (t.kind === 'READER' && this.tokens[i + 1]?.kind !== 'COLON')
+        || t.kind === 'WHERE')) {
         return true;
       }
       i++;
