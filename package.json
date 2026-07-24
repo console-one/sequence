@@ -1,6 +1,6 @@
 {
   "name": "@console-one/sequence",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Append-only behavioral type kernel. Types and values are the same continuum; mount a fact, see what's missing (gaps), fill gaps through compose, capabilities activate. One operation (mount), one data structure (Sequence), one protocol (ft text in/out).",
   "repository": {
     "type": "git",
