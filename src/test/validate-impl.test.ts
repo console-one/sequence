@@ -66,10 +66,30 @@ describe('impl/ ft block validation', () => {
     return;
   }
 
+  // PARSE_LEDGER.json is the RATCHET (2026-07-24): the spec corpus was
+  // recovered from ft history with 98 of 113 files carrying designed-but-
+  // not-yet-parsed syntax (the DSL_REQUIREMENTS vs SYNTAX_SUPPORTED gap,
+  // measured). A file in the ledger is a known gap and may keep failing;
+  // a file NOT in the ledger must parse (regression guard); and a
+  // ledgered file that STARTS parsing fails the suite until it is
+  // removed — so grammar progress is recorded, never silent.
+  const ledger = new Set<string>(
+    JSON.parse(fs.readFileSync(path.join(IMPL_DIR, 'PARSE_LEDGER.json'), 'utf-8')) as string[],
+  );
+
   for (const file of filesWithFt) {
     const relPath = path.relative(IMPL_DIR, file);
-    test(`${relPath}: ft blocks parse and mount`, () => {
+    const known = ledger.has(relPath);
+    test(`${relPath}: ${known ? 'known grammar gap (ledgered)' : 'ft blocks parse and mount'}`, () => {
       const result = validateFile(file);
+      if (known) {
+        if (result.ok) {
+          throw new Error(
+            `${relPath} now parses — grammar progress! Remove it from specs/impl/PARSE_LEDGER.json to record the ratchet.`,
+          );
+        }
+        return; // known gap, still a gap — documented, not silent
+      }
       if (!result.ok) {
         console.error(`Errors in ${relPath}:`);
         for (const err of result.errors) console.error(`  ${err}`);

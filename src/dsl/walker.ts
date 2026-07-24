@@ -20,6 +20,10 @@ import {
   createType,
   indexSpec,
   bindFrom,
+  pattern as patternConstraint,
+  min as minConstraint,
+  max as maxConstraint,
+  literal as literalConstraint,
 } from '../type';
 import { type BlockOpts } from '../statement';
 import { FT } from '../builder';
@@ -726,6 +730,9 @@ function toType(expr: Expr): Type {
     case 'refined': {
       // Base type + predicates → compile predicates to constraints on the base type
       const base = toType(expr.base);
+      let baseConstraints: Constraint[] = [...base.constraints];
+      let effKind = base.kind;
+      let propertyTightened = false;
       const extraConstraints: Constraint[] = [];
       for (const pred of expr.predicates) {
         if (pred.kind === 'comparison') {
@@ -744,6 +751,66 @@ function toType(expr: Expr): Type {
                 from: from ? exprToExpr(from) : undefined,
                 until: until ? exprToExpr(until) : undefined,
               }));
+            }
+          }
+          // Non-identity operators on a DIRECT property narrow that
+          // property's own type using the vocabulary check() already
+          // enforces (pattern/min/max/union-of-literals) — never a new
+          // op the admission layer would silently ignore. Before
+          // 2026-07-24 these predicates parsed (or failed to — the
+          // MATCHES token bug) and were dropped here without effect.
+          // Exact-semantics subset only: MATCHES, IN, >=, <=. Strict
+          // >/</!= and HAS/SATISFIES stay on the SYNTAX_SUPPORTED gap
+          // ledger rather than shipping approximated meanings.
+          if (pred.op !== '=') {
+            const lhsPath = exprToPath(pred.lhs);
+            if (lhsPath && !lhsPath.includes('.')) {
+              const rhsVal = exprToValue(pred.rhs);
+              let narrow: Type | null = null;
+              if (pred.op === 'MATCHES' && typeof rhsVal === 'string') {
+                narrow = createType('string', [patternConstraint(rhsVal)]);
+              } else if (pred.op === 'IN' && pred.rhs?.kind === 'union') {
+                const values = (pred.rhs.branches as any[])
+                  .map((b) => exprToValue(b))
+                  .filter((v) => v !== undefined);
+                if (values.length > 0) {
+                  narrow = FT.or(...values.map((v) =>
+                    createType(typeof v === 'number' ? 'number' : typeof v === 'boolean' ? 'boolean' : 'string', [literalConstraint(v)]),
+                  )).toType();
+                }
+              } else if (pred.op === '>=' && typeof rhsVal === 'number') {
+                narrow = createType('number', [minConstraint(rhsVal)]);
+              } else if (pred.op === '<=' && typeof rhsVal === 'number') {
+                narrow = createType('number', [maxConstraint(rhsVal)]);
+              }
+              if (narrow) {
+                if (base.kind === 'object') {
+                  // Object-scoped refinement: `{...} | email MATCHES /re/`
+                  // — tighten the named property's type.
+                  const propIdx = baseConstraints.findIndex(
+                    (bc) => bc.op === 'property' && bc.args[0] === lhsPath,
+                  );
+                  if (propIdx >= 0) {
+                    const [key, propType, optional] = baseConstraints[propIdx].args as [string, Type, boolean];
+                    baseConstraints[propIdx] = { op: 'property', args: [key, compose(propType, narrow), optional] };
+                    propertyTightened = true;
+                  }
+                } else if (narrow.kind === effKind) {
+                  // Property-scoped refinement: `email: string | email
+                  // MATCHES /re/` — the refined node wraps the property's
+                  // own type, so the predicate tightens the base itself.
+                  baseConstraints.push(...narrow.constraints);
+                  propertyTightened = true;
+                } else if (narrow.kind === 'or') {
+                  // `role: string | role IN {…}` — a union narrow of a
+                  // scalar goes through the lattice meet, which may change
+                  // the kind (string ⊓ or(lits) = or(lits)).
+                  const met = compose(createType(effKind, baseConstraints, base.meta), narrow);
+                  effKind = met.kind;
+                  baseConstraints = [...met.constraints];
+                  propertyTightened = true;
+                }
+              }
             }
           }
           // Temporal constraint (activation/expiry)
@@ -770,8 +837,8 @@ function toType(expr: Expr): Type {
           });
         }
       }
-      if (extraConstraints.length === 0) return base;
-      return createType(base.kind, [...base.constraints, ...extraConstraints], base.meta);
+      if (extraConstraints.length === 0 && !propertyTightened) return base;
+      return createType(effKind, [...baseConstraints, ...extraConstraints], base.meta);
     }
 
     case 'prev':

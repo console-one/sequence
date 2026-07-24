@@ -383,7 +383,9 @@ export class Parser {
         return { kind: 'compare', lhs: { kind: 'name', name: path }, op, rhs };
       }
 
-      if (this.atValue('IDENT', 'MATCHES')) {
+      // MATCHES tokenizes as its own keyword kind — the IDENT-value form
+      // is kept for safety but could never fire alone (found 2026-07-24).
+      if (this.at('MATCHES') || this.atValue('IDENT', 'MATCHES')) {
         this.advance();
         const pattern = this.expect('REGEX').value;
         return { kind: 'matches', path, pattern };
@@ -975,7 +977,24 @@ export class Parser {
   private parseComparisonPredicate(): Predicate {
     const lhs = this.parseExpr();
     const op = this.parsePredicateOp();
-    const rhs = this.parseExpr();
+    let rhs: Expr;
+    if (op === 'IN' && this.at('LBRACE')) {
+      // Set literal: `role IN { "admin", "member" }` — a union of
+      // literals, not an object type (which would demand key: value).
+      this.advance();
+      const branches: Expr[] = [];
+      while (!this.at('RBRACE') && !this.at('EOF')) {
+        branches.push(this.parseExpr());
+        this.match('COMMA');
+      }
+      this.expect('RBRACE');
+      rhs = { kind: 'union', branches };
+    } else if (op === 'MATCHES' && this.at('REGEX')) {
+      // `email MATCHES /re/` — the pattern is a literal, not an expr.
+      rhs = { kind: 'literal', value: this.advance().value };
+    } else {
+      rhs = this.parseExpr();
+    }
 
     let temporal: { from: Expr; until?: Expr } | undefined;
     if (this.at('AT')) {
@@ -1008,7 +1027,10 @@ export class Parser {
     if (this.match('LTE')) return '<=';
     if (this.match('GT')) return '>';
     if (this.match('GTE')) return '>=';
-    if (this.atValue('IDENT', 'MATCHES')) { this.advance(); return 'MATCHES'; }
+    // MATCHES tokenizes as keyword kind MATCHES, exactly like HAS and
+    // SATISFIES below — the IDENT-value check alone never fired, so
+    // `| x MATCHES /re/` threw despite full walker support (2026-07-24).
+    if (this.atValue('IDENT', 'MATCHES') || this.at('MATCHES')) { this.advance(); return 'MATCHES'; }
     if (this.atValue('IDENT', 'HAS') || this.at('HAS')) { this.advance(); return 'HAS'; }
     if (this.at('IN')) { this.advance(); return 'IN'; }
     if (this.atValue('IDENT', 'SATISFIES') || this.at('SATISFIES')) { this.advance(); return 'SATISFIES'; }
@@ -1029,17 +1051,31 @@ export class Parser {
     const family = this.expect('IDENT').value;
     this.expect('LPAREN');
     const params: Record<string, number> = {};
+    let subFamily: string | undefined;
     while (!this.at('RPAREN') && !this.at('EOF')) {
       if (this.at('IDENT')) {
         const key = this.advance().value;
-        this.expect('ASSIGN');
-        params[key] = parseFloat(this.expect('NUMBER').value);
+        if (this.at('ASSIGN')) {
+          this.advance();
+          params[key] = parseFloat(this.expect('NUMBER').value);
+        } else {
+          // Bare ident positional param — the spec's `~survival(exp, 0.001)`
+          // form, where the first arg names the underlying distribution.
+          subFamily = subFamily ?? key;
+        }
       } else if (this.at('NUMBER')) {
         params[`_${Object.keys(params).length}`] = parseFloat(this.advance().value);
       }
       this.match('COMMA');
     }
     this.expect('RPAREN');
+    if (subFamily) {
+      // survival(exp, r) → distribution exp with rate r; exp is shorthand
+      // for the constraint layer's 'exponential' family.
+      const mapped = subFamily === 'exp' ? 'exponential' : subFamily;
+      const rate = params._0;
+      return { family: mapped, params: rate !== undefined ? { rate } : params };
+    }
     return { family, params };
   }
 
