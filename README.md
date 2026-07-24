@@ -1,6 +1,24 @@
 # @console-one/sequence
 
-Append-only behavioral type kernel. Types and values are the same continuum — a value IS a maximally concrete type. Mount a typed fact, see what's missing (gaps), fill gaps through compose, capabilities activate. One operation (`mount`), one data structure (`Sequence`), one protocol (ft text in/out).
+If you build anything agent-shaped — a harness, a tool router, a job
+queue that people and LLMs share — you keep needing answers ordinary
+type systems refuse to give: *how complete is this record, exactly?*
+*how long will this call take?* *can this plan make its deadline, at
+what confidence?* *who may write this, and what happens to a write that
+arrives early?* *under a 500-token budget, what is worth showing this
+reader?*
+
+sequence answers all of them with one mechanism: an append-only log of
+typed facts (`mount` is the only write), a derived projection, and a
+type lattice where **a value is a maximally concrete type**. Schemas,
+values, laws, cost curves, and reader budgets are all the same substance
+on the same log — so validation, progress, scheduling, access control
+and rendering stop being separate subsystems. There is a text form, the
+**ft language**, that round-trips with the store.
+
+**Start with [the tutorial](doc/index.md)** — five short parts, one
+running example each, and every ft block in it is executed by this
+repository's test suite, so the pages cannot drift from the kernel.
 
 ## Install
 
@@ -8,18 +26,25 @@ Append-only behavioral type kernel. Types and values are the same continuum — 
 npm install @console-one/sequence
 ```
 
-## Quick start
+## Sixty seconds of it
 
 ```ts
-import { Sequence, FT } from '@console-one/sequence';
+import { Sequence, receive } from '@console-one/sequence';
 
 const seq = new Sequence();
-seq.mount('schema', 'count', FT.number());
-seq.mount('bind', 'count', 42);
+receive('deploy = { service: string, region: "us-east-1" | "eu-west-1", replicas: number }', seq);
 
-seq.get('count');        // 42
-seq.concreteness('count'); // 1 — value satisfies schema
+seq.concreteness('deploy');                    // 0.159 — declared, far from done
+receive('deploy.region = "ap-south-2"', seq);  // ok: false — "matches none of 2 branches"
+receive('deploy.service = "checkout"', seq);
+receive('deploy.replicas = 3', seq);
+receive('deploy.region = "eu-west-1"', seq);
+seq.concreteness('deploy');                    // 1 — the record's value IS its type now
 ```
+
+The store measured the distance between "declared" and "done", refused
+the illegal write with a reason, and knew the moment the record became
+actionable — none of which was written as application code.
 
 ## Runnable examples
 
