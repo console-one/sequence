@@ -52,6 +52,12 @@ so and links the issue rather than writing around it.
 5. **[Attention](part5-attention.md)** — one store, many readers, each
    with a budget: cluster → score → rank → budget → hoist, with
    evictions reported instead of silently dropped.
+6. **[Clauses and claims](part6-clauses-and-claims.md)** — the layer the
+   language was designed for: `when`/`while`/`by` gates on statements,
+   enforced predicates (`MATCHES`, `IN`, bounds), Δt interval scope and
+   reliability curves on claims, and the quantifier layer (∀/∈ as
+   `index … over … where`). Includes the honest designed-vs-implemented
+   ledger.
 
 ## Where this is used
 
