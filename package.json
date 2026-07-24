@@ -41,7 +41,8 @@
     "clean": "rm -rf dist",
     "test": "jest",
     "lint": "tsc --noEmit",
-    "prepublishOnly": "npm run clean && npm run build && npm test"
+    "prepublishOnly": "npm run clean && npm run build && npm test",
+    "examples": "node examples/run-all.mjs"
   },
   "keywords": [
     "sequence",

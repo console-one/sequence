@@ -21,6 +21,20 @@ seq.get('count');        // 42
 seq.concreteness('count'); // 1 — value satisfies schema
 ```
 
+## Runnable examples
+
+`examples/` holds six self-asserting demos — one per core claim (continuum,
+learned cost curves, temporal feasibility, backward inference, admission
+laws, budgeted rendering) — plus a reproducible micro-benchmark:
+
+```bash
+npm run build
+npm run examples        # all six, fail-fast; each exits non-zero if its claim breaks
+node examples/bench.mjs # numbers on YOUR machine, including the honest scaling curve
+```
+
+See `examples/README.md` for the claim-by-claim table.
+
 ## Core API
 
 - **`Sequence`** — append-only block log with derived projection. `mount()` is the only write operation.
