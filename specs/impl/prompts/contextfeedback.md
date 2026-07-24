@@ -97,8 +97,8 @@ ToolCallRecord = {
 Each tool call starts as "pending" and transitions to "complete" (with a result) or "failed" after execution. The next prompt includes the results.
 
 ```ft
-cap FeedbackLoop.turns
-cap FeedbackTurn.applied
+tool FeedbackLoop.turns
+tool FeedbackTurn.applied
 ```
 
 ## What This Validates

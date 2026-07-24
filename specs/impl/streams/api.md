@@ -64,10 +64,10 @@ Reading `events` returns only event items. Reading `logs` returns only log items
 Stream operations are externally provided -- producers mount items, consumers read the prefix:
 
 ```ft
-cap Stream.schema
-cap messages.0
-cap messages.1
-cap messages.2
+tool Stream.schema
+tool messages.0
+tool messages.1
+tool messages.2
 ```
 
 No special "append" capability exists. Writing to the next index IS the append.

@@ -94,7 +94,7 @@ Each time a gap is filled, a snapshot records the new aggregate loss. The sequen
 Gap priority is derived, not set manually. Loss is computed, not stored. The only external input is the gap resolution itself:
 
 ```ft
-cap GapEntry.path
+tool GapEntry.path
 ```
 
 ## What This Validates

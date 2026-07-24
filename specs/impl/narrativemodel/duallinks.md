@@ -92,10 +92,10 @@ After invalidation, reading `docB.sourceBudget` returns no value. The dependency
 References and derivations are declared by the document author. The cascade engine is system-provided:
 
 ```ft
-cap docA.budget
-cap docB.title
-cap docB.sourceBudget
-cap docA.linkedProposal
+tool docA.budget
+tool docB.title
+tool docB.sourceBudget
+tool docA.linkedProposal
 ```
 
 ## What This Validates

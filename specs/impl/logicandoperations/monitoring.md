@@ -223,9 +223,9 @@ Each entry carries its current healthy/alertActive status. The user can see whic
 The externally-provided operations: updating metric values and managing alert rules:
 
 ```ft
-cap HealthCondition.currentValue
-cap HysteresisAlert.currentValue
-cap DerivedMetric.currentValue
+tool HealthCondition.currentValue
+tool HysteresisAlert.currentValue
+tool DerivedMetric.currentValue
 ```
 
 ## What This Validates

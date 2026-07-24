@@ -61,8 +61,8 @@ The suspension includes a reason: "value 15 exceeds max 10 at path env.maxAgents
 For debugging, the system supports inspecting the raw constraint at an exact path (what was declared here, without composition) versus the effective constraint (the composed result of all ancestors):
 
 ```ft
-cap Constraint.effective
-cap Constraint.raw
+tool Constraint.effective
+tool Constraint.raw
 ```
 
 `raw` at `env.team1` returns only `{ field: "tokenBudget", op: "<=", limit: 20000 }`. `effective` at `env.team1` returns the composed result of the `env` and `env.team1` constraints -- the tightest bound for each field.

@@ -75,7 +75,7 @@ RemoteCapability = {
 ```
 
 ```ft
-cap RemoteCapability.name when endpoint EXISTS
+tool RemoteCapability.name when endpoint EXISTS
 ```
 
 The runtime routes capability invocations to the remote server when local execution is impossible. The result is incorporated into local state.

@@ -77,9 +77,9 @@ Removing a forward ref works the same way. The cost of updating the backlink ind
 The backlink index is readable by any process that needs reverse-reference information. Strength thresholds are configurable:
 
 ```ft
-cap BacklinkIndex.entries
-cap BacklinkPresentation.expandThreshold
-cap BacklinkPresentation.compressThreshold
+tool BacklinkIndex.entries
+tool BacklinkPresentation.expandThreshold
+tool BacklinkPresentation.compressThreshold
 ```
 
 ## What This Validates

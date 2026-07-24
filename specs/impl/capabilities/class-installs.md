@@ -47,10 +47,10 @@ storage = S3Storage
 storage << { bucket: "my-data", region: "us-east-1" }
 storage << { credentials: ref("env.constants.aws") }
 -- Now storage.read, storage.write, storage.list, storage.delete are capabilities
-cap storage.read
-cap storage.write
-cap storage.list
-cap storage.delete
+tool storage.read
+tool storage.write
+tool storage.list
+tool storage.delete
 ```
 
 ## Recursive Blueprinting

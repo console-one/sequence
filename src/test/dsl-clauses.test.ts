@@ -93,3 +93,42 @@ describe('the quantifier layer (∀/∈ as index/over/where)', () => {
     expect(seq.get('sessions.bob.status')).toBeUndefined();
   });
 });
+
+describe('call-result paths and the identity clause (2026-07-24 unlock)', () => {
+  test('the write/read identity clause — spec verbatim — parses and mounts', () => {
+    const seq = new Sequence();
+    const r = receive(
+      'fs = { write: (p: string, content: string) -> { ok: true | read(p).content = content @[T_out..next_write(p).T_out) ~survival(exp, 0.001) } }',
+      seq,
+    );
+    expect(okAll(r)).toBe(true);
+  });
+
+  test('a literal union stays a union (disambiguation does not overreach)', () => {
+    const seq = new Sequence();
+    receive('st = { status: "created" | "paid" | "shipped" }', seq);
+    expect(okAll(receive('st = { status: "paid" }', seq))).toBe(true);
+    expect(rejected(receive('st = { status: "bogus" }', seq))).toBeDefined();
+  });
+});
+
+describe('property-level gates lower to statement gates', () => {
+  test('while + onBreak on a schema property mounts (Worker, spec shape)', () => {
+    const seq = new Sequence();
+    const r = receive(
+      'Worker = { heartbeat: number, task: string while alive = true onBreak events.taskExpired = true }',
+      seq,
+    );
+    expect(okAll(r)).toBe(true);
+  });
+
+  test('when-gated property in a narrow waits, then promotes on the SIBLING condition', () => {
+    const seq = new Sequence();
+    receive('deleteApproval = { status: string, currentApprovals: number }', seq);
+    receive('deleteApproval.currentApprovals = 1', seq);
+    receive('deleteApproval << { status: "approved" when currentApprovals = 2 }', seq);
+    expect(seq.get('deleteApproval.status')).toBeUndefined();
+    receive('deleteApproval.currentApprovals = 2', seq);
+    expect(seq.get('deleteApproval.status')).toBe('approved');
+  });
+});

@@ -139,7 +139,7 @@ The converter is a single capability: it takes a JSON Schema and produces an int
 ```ft
 convert = (schema: string) -> { fieldType: string }
 
-cap convert
+tool convert
 ```
 
 The input is the raw JSON Schema (as a string or parsed object). The output is the internal type representation. Conversion errors (unsupported features, unresolvable references) produce typed errors identifying the specific issue, not generic failure messages.

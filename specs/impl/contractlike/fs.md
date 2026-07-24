@@ -37,9 +37,9 @@ A concrete file system is an instance of the type. The capabilities are register
 
 ```ft
 localFs = FileSystem
-cap localFs.read
-cap localFs.write
-cap localFs.list
+tool localFs.read
+tool localFs.write
+tool localFs.list
 ```
 
 When the agent needs file content, backward inference finds `localFs.read` because its output type matches the need. When the agent writes a file, the system knows that `localFs.read` on the same path will return the written content -- not because of a separate rule, but because write's return type says so.

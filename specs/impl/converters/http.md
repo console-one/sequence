@@ -78,7 +78,7 @@ An incoming HTTP request is converted to internal state by mounting it as a type
 ```ft
 inbound = (request: HttpRequest) -> { data: HttpRequest }
 
-cap inbound
+tool inbound
 ```
 
 Each conversion is independent -- processing request B has no dependency on request A. The converter holds no mutable state between requests. This is the fundamental statelessness guarantee.
@@ -90,7 +90,7 @@ Internal results are converted back to HTTP responses. The converter reads the i
 ```ft
 outbound = (result: { data: string | null, error: string | null }) -> { response: HttpResponse }
 
-cap outbound
+tool outbound
 ```
 
 ## Reference Binding

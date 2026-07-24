@@ -142,10 +142,10 @@ If the "min per member" constraint (priority 2) says a new member must get 10 un
 Enforcement operations -- constraint evaluation, violation detection, and audit logging -- are provided by the rule engine:
 
 ```ft
-cap Constraint.active
-cap Constraint.threshold
-cap UsageRecord.currentUsage
-cap AuditEntry.decision
+tool Constraint.active
+tool Constraint.threshold
+tool UsageRecord.currentUsage
+tool AuditEntry.decision
 ```
 
 ## What This Validates

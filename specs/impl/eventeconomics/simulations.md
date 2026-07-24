@@ -158,11 +158,11 @@ The injection references a historical event (an actual past machine failure) rat
 Simulation creation and injection are user-driven. The cascade and comparison are system-derived:
 
 ```ft
-cap Simulation.name
-cap Simulation.branchPoint
-cap Injection.path
-cap Injection.injectedValue
-cap MonteCarloRun.simulationCount
+tool Simulation.name
+tool Simulation.branchPoint
+tool Injection.path
+tool Injection.injectedValue
+tool MonteCarloRun.simulationCount
 ```
 
 ## What This Validates

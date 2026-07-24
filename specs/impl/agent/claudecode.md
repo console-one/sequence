@@ -64,7 +64,7 @@ Interaction = {
 ```
 
 ```ft
-cap ClaudeCodeConnection.prompt
+tool ClaudeCodeConnection.prompt
 ```
 
 The capability accepts a prompt string and returns a structured response. This is a typed function call across a process boundary.
@@ -124,7 +124,7 @@ AgentAddress = {
 ```
 
 ```ft
-cap AgentAddress.prompt when addressable = true
+tool AgentAddress.prompt when addressable = true
 ```
 
 A non-user process can send a prompt to the agent and receive a response through the same interface.

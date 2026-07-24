@@ -81,12 +81,12 @@ Capabilities are registered during `mountCapabilities`. The environment provides
 -- Environment mounts file system capabilities:
 fs.read = (path: string) -> { content: string, size: number >= 0 }
 fs.write = (path: string, content: string) -> { ok: true }
-cap fs.read
-cap fs.write
+tool fs.read
+tool fs.write
 
 -- Environment mounts LLM capability:
 llm.complete = (prompt: string) -> { text: string }
-cap llm.complete
+tool llm.complete
 ```
 
 When the Sequence encounters a gap that a registered capability can resolve, it produces a `PendingInvocation` in the mount result. The environment executes the invocation and mounts the result back:

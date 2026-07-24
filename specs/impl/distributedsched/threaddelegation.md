@@ -108,9 +108,9 @@ When a task is re-dispatched from one worker to another, any intermediate state 
 ```ft
 delegation2 << { intermediateState: "partial-result-from-workerA" }
 
-cap Delegation.status
-cap Delegation.intermediateState
-cap WorkerState.status
+tool Delegation.status
+tool Delegation.intermediateState
+tool WorkerState.status
 ```
 
 The intermediate state is not discarded on delegation break. It carries forward to the next delegation, so the new worker can continue from where the previous worker left off rather than starting from scratch.

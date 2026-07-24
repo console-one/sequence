@@ -167,10 +167,10 @@ scheduleView = {
 The externally-provided operations: completing tasks, updating resource status, and providing input data:
 
 ```ft
-cap Task.status
-cap Task.output
-cap Resource.status
-cap Resource.currentTask
+tool Task.status
+tool Task.output
+tool Resource.status
+tool Resource.currentTask
 ```
 
 ## What This Validates

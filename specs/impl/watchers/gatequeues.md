@@ -82,7 +82,7 @@ Workers are typed functions that process tasks. The schema of the work item and 
 
 ```ft
 processTask = (task: Task) -> { result: string }
-cap processTask
+tool processTask
 ```
 
 ## Multiple Independent Queues

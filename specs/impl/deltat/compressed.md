@@ -66,7 +66,7 @@ The scheduler consumes the compressed representation directly. Gaps are returned
 
 ```ft
 gapsByPriority = (gaps: ref(allGaps)) -> { sorted: ref(allGaps) }
-cap gapsByPriority
+tool gapsByPriority
 ```
 
 ## Learning Across Sessions

@@ -110,9 +110,9 @@ The conjunction -- alarm requires BOTH temperature >= 200 AND pressure >= 500 --
 The monitored value is externally provided:
 
 ```ft
-cap toggle.value
-cap multiToggle.temperature
-cap multiToggle.pressure
+tool toggle.value
+tool multiToggle.temperature
+tool multiToggle.pressure
 ```
 
 ## What This Validates

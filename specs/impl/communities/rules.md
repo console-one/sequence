@@ -192,12 +192,12 @@ Rules within the same scope compose conjunctively by default -- all applicable r
 Rule operations -- evaluation, version tracking, approval counting, and temporal checking -- are provided by the rule engine:
 
 ```ft
-cap Rule.active
-cap Rule.version
-cap QuotaRule.currentUsage
-cap ApprovalRule.currentApprovals
-cap ApprovalRule.status
-cap TemporalRule.active
+tool Rule.active
+tool Rule.version
+tool QuotaRule.currentUsage
+tool ApprovalRule.currentApprovals
+tool ApprovalRule.status
+tool TemporalRule.active
 ```
 
 ## What This Validates

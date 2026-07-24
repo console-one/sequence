@@ -120,8 +120,8 @@ MetricState = {
   newestExpiry: number >= 0
 }
 
-cap metric.total
-cap metric.updateCount
+tool metric.total
+tool metric.updateCount
 ```
 
 The user sees not just the final number but how it is composed. They can inspect individual entries, see their remaining windows, and understand why the aggregate changes.

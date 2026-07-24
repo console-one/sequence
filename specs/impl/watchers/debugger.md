@@ -81,8 +81,8 @@ A change to "alpha" fires only watcherAlpha. A change to "beta" fires only watch
 The debug flag and the watched path are externally provided:
 
 ```ft
-cap debugMode
-cap watcher.target
+tool debugMode
+tool watcher.target
 ```
 
 ## What This Validates

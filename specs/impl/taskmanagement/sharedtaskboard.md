@@ -108,11 +108,11 @@ The union of all columns equals the complete task set. No task is missing from a
 Board operations -- status transitions, assignment, output, and board configuration -- are externally provided:
 
 ```ft
-cap BoardTask.status
-cap BoardTask.assignee
-cap BoardTask.output
-cap Board.wipLimit
-cap Board.activeCount
+tool BoardTask.status
+tool BoardTask.assignee
+tool BoardTask.output
+tool Board.wipLimit
+tool Board.activeCount
 ```
 
 ## What This Validates

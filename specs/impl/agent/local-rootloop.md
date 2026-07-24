@@ -58,9 +58,9 @@ A task submitted while the agent is processing another task appears in the oblig
 The agent has access to filesystem operations, shell execution, and LLM invocation:
 
 ```ft
-cap RootLoopAgent.filesystem
-cap RootLoopAgent.shell
-cap RootLoopAgent.llm
+tool RootLoopAgent.filesystem
+tool RootLoopAgent.shell
+tool RootLoopAgent.llm
 ```
 
 "Root" implies full access to the local environment. Within a single task, the agent can read source files, execute shell commands, and invoke the LLM.

@@ -81,8 +81,8 @@ Propagation is automatic on any state mutation. There is no separate "propagate 
 ```ft
 -- write triggers propagation automatically
 nodeA << { stale: false }
-cap DependencyNode.value
-cap DependencyNode.stale
+tool DependencyNode.value
+tool DependencyNode.stale
 ```
 
 ## What This Validates

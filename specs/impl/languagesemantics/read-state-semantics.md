@@ -159,7 +159,7 @@ output = (data: string) -> { summary: string }
 -- "output" has a function type schema but no value.
 -- It appears in gaps() with reason "unresolved".
 
-cap searchTool
+tool searchTool
 -- "searchTool" has a capability registered.
 -- It does NOT appear in gaps (it has an implementation).
 

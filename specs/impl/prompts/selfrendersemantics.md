@@ -79,8 +79,8 @@ The lock indicator is part of the rendered output. No operation -- not the LLM, 
 The same process state renders in different formats for different consumers. The LLM sees a text prompt. The CLI sees terminal output. The UI sees structured data. The underlying data is identical across all formats.
 
 ```ft
-cap SelfRender.regions
-cap SelfRender.gaps
+tool SelfRender.regions
+tool SelfRender.gaps
 ```
 
 Reading the regions and gaps through the same interface, regardless of format, guarantees that no consumer sees different data -- only different presentations of the same data.

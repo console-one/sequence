@@ -57,7 +57,7 @@ Eviction removes values from the rendering window. It does not remove schemas, c
 -- Before eviction:
 config.model = "claude-3"
 config.maxTokens = 4000
-cap config.apply
+tool config.apply
 
 -- After eviction (config cluster below budget):
 config = [[ evicted.config : { model: string, maxTokens: number }, 1 cap ]]

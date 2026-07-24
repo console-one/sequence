@@ -66,7 +66,7 @@ This ranking emerges from type comparison. No priority scores, no weighted routi
 When exactly one capability matches a task's requirement, the assignment is automatic. No dispatcher decision needed -- there is only one candidate:
 
 ```ft
-cap Capability.handler
+tool Capability.handler
 ```
 
 The task is schedulable to the sole matching capability without external coordination. When multiple capabilities match, the system surfaces the ranked list as a gap requiring selection.

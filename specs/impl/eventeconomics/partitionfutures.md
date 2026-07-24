@@ -142,10 +142,10 @@ The East region inherits NYC's forecast value via ref. The West region is a new 
 The partition topology and individual forecasts are user-provided:
 
 ```ft
-cap Partition.granularity
-cap Partition.elements
-cap PartitionElement.forecast
-cap Headcount.expected
+tool Partition.granularity
+tool Partition.elements
+tool PartitionElement.forecast
+tool Headcount.expected
 ```
 
 ## What This Validates

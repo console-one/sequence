@@ -418,6 +418,16 @@ export class Parser {
         const right = this.parsePrimaryExpr();
         left = { kind: 'intersection', members: flatIntersection(left, right) };
       } else if (this.at('PIPE') && !this.inRefinementContext) {
+        // Disambiguate union vs refinement: `"a" | "b"` is a union of
+        // types, but `true | read(p).content = content` is a predicate
+        // on the value. A bounded lookahead decides: a predicate
+        // OPERATOR before the next depth-0 terminator means refinement.
+        // Without this, refinements after literal-typed properties
+        // (the write/read identity clause's real position in the spec)
+        // could never parse (2026-07-24).
+        if (this.pipeStartsPredicate()) {
+          return this.parseRefinement(left);
+        }
         this.advance();
         const right = this.parsePrimaryExpr();
         left = { kind: 'union', branches: flatUnion(left, right) };
@@ -427,6 +437,35 @@ export class Parser {
     }
 
     return left;
+  }
+
+  /** At a PIPE: does what follows read as a predicate rather than a
+   *  union branch? Scan ahead (bounded, no consumption) for a predicate
+   *  operator at nesting depth 0 before a terminator. `->` ends the
+   *  scan too: a fn type after `|` is a union branch, and any predicate
+   *  belongs to the fn's own output type. */
+  private pipeStartsPredicate(): boolean {
+    let i = this.pos + 1; // token after the PIPE
+    let depth = 0;
+    while (i < this.tokens.length) {
+      const t = this.tokens[i];
+      if (t.kind === 'LPAREN' || t.kind === 'LBRACE' || t.kind === 'LBRACKET') depth++;
+      else if (t.kind === 'RPAREN' || t.kind === 'RBRACKET') { if (depth === 0) return false; depth--; }
+      else if (t.kind === 'RBRACE') { if (depth === 0) return false; depth--; }
+      else if (depth === 0) {
+        if (t.kind === 'ASSIGN' || t.kind === 'NEQ' || t.kind === 'LT' || t.kind === 'LTE'
+          || t.kind === 'GT' || t.kind === 'GTE' || t.kind === 'MATCHES' || t.kind === 'HAS'
+          || t.kind === 'IN' || t.kind === 'SATISFIES' || t.kind === 'FORALL') {
+          return true;
+        }
+        if (t.kind === 'COMMA' || t.kind === 'PIPE' || t.kind === 'ARROW' || t.kind === 'EOF'
+          || t.kind === 'WHEN' || t.kind === 'WHILE' || t.kind === 'BY') {
+          return false;
+        }
+      }
+      i++;
+    }
+    return false;
   }
 
   private inRefinementContext = false;
@@ -649,7 +688,7 @@ export class Parser {
   }
 
   private parseObjectExpr(): Expr {
-    const properties: { key: string; value: Expr; optional: boolean }[] = [];
+    const properties: { key: string; value: Expr; optional: boolean; modifiers?: Modifiers }[] = [];
     while (!this.at('RBRACE') && !this.at('EOF')) {
       this.skipComments(); // skip inline comments
       if (this.at('RBRACE')) break;
@@ -657,12 +696,48 @@ export class Parser {
       const optional = !!this.match('QUESTION');
       this.expect('COLON');
       const value = this.parseExpr();
-      properties.push({ key, value, optional });
+      // Property-level gates (the spec's Worker example:
+      // `task: string while alive = true onBreak events.taskExpired = true`).
+      // Single condition per gate here — the COMMA belongs to the
+      // property list, not a condition list. The walker LOWERS these to
+      // child statements with the same modifiers, so the semantics are
+      // exactly the statement-level gates', nothing new.
+      if (this.at('WHEN') || this.at('WHILE') || this.at('ONBREAK') || this.at('BY')) {
+        properties.push({ key, value, optional, modifiers: this.parsePropertyModifiers() });
+      } else {
+        properties.push({ key, value, optional });
+      }
 
       this.match('COMMA');
     }
     this.expect('RBRACE');
     return { kind: 'object', properties };
+  }
+
+  /** Statement modifiers restricted to property position: when/while
+   *  take exactly ONE condition (no comma continuation). */
+  private parsePropertyModifiers(): Modifiers {
+    const m: Modifiers = {};
+    if (this.at('WHEN')) {
+      this.advance();
+      m.when = [this.parseCondition()];
+    }
+    if (this.at('WHILE')) {
+      this.advance();
+      m.while = [this.parseCondition()];
+    }
+    if (this.at('ONBREAK')) {
+      this.advance();
+      const path = this.parsePath();
+      this.expect('ASSIGN');
+      const value = this.parseExpr();
+      m.onBreak = { path, value };
+    }
+    if (this.at('BY')) {
+      this.advance();
+      m.author = this.expect('STRING').value;
+    }
+    return m;
   }
 
   private parseArrayExpr(): Expr {
@@ -813,6 +888,19 @@ export class Parser {
       this.match('COMMA');
     }
     this.expect('RPAREN');
+    // Postfix result path: `read(p).content`, `next_write(p).T_out` —
+    // a symbolic path INTO the call's result. This is the LHS of the
+    // write/read identity clause and the anchor of Δt intervals
+    // (DSL_REQUIREMENTS "Temporal"); until 2026-07-24 the DOT here
+    // threw and the whole clause family was unreachable from text.
+    if (this.at('DOT')) {
+      const resultPath: string[] = [];
+      while (this.at('DOT')) {
+        this.advance();
+        resultPath.push(this.expect('IDENT').value);
+      }
+      return { kind: 'call', fn: fnName, args, resultPath };
+    }
     return { kind: 'call', fn: fnName, args };
   }
 
@@ -1041,7 +1129,13 @@ export class Parser {
     this.expect('FORALL');
     const variable = this.expect('IDENT').value;
     this.expect('COLON');
-    const set = this.parseExpr();
+    // The set is an ident or a call — NOT a full expr, because a full
+    // expr's dotted-path production would consume the `.` that
+    // separates the set from the body (`forall c : cells . c >= 0`).
+    const setName = this.expect('IDENT').value;
+    const set: Expr = this.at('LPAREN')
+      ? this.parseCallExpr(setName)
+      : { kind: 'name', name: setName };
     this.expect('DOT');
     const body = this.parseComparisonPredicate();
     return { kind: 'forall', variable, set, body };

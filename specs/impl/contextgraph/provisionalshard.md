@@ -78,9 +78,9 @@ After merge, traffic for the sub-range returns to the parent. The shard is eligi
 The shard lifecycle is managed by the parent. The shard's status and lock are externally observable:
 
 ```ft
-cap Shard.status
-cap Shard.lockClaimed
-cap Shard.queueDepth
+tool Shard.status
+tool Shard.lockClaimed
+tool Shard.queueDepth
 ```
 
 ## What This Validates

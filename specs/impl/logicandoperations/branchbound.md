@@ -108,9 +108,9 @@ Both policies produce the same optimal solution. Depth-first typically prunes mo
 The two externally-provided operations: evaluating a node (computing a feasible value within its range) and branching (partitioning a node's range into children):
 
 ```ft
-cap SearchNode.feasibleValue
-cap SearchNode.lowerBound
-cap SearchNode.upperBound
+tool SearchNode.feasibleValue
+tool SearchNode.lowerBound
+tool SearchNode.upperBound
 ```
 
 ## What This Validates

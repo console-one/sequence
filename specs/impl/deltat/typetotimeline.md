@@ -121,8 +121,8 @@ divergentPriority = {
   priority: number 0..1
 }
 
-cap analysis.significant
-cap plan.resolvingCapability
+tool analysis.significant
+tool plan.resolvingCapability
 ```
 
 The scheduler presents divergent inputs as high-value resolution targets: "Resolving user.role would narrow the time estimate from 5-45s to either 5s or 45s."

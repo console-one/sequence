@@ -109,7 +109,7 @@ queryState = (pt: ProbabilisticType) -> {
   concreteness: number 0..1
 }
 
-cap queryState
+tool queryState
 ```
 
 Each live branch reports its type, current probability, and the kind of evidence that would kill it (e.g., "if the result has a 'role' field, this branch dies"). This enables the agent to make informed scheduling decisions: "it's 95% likely to be a User, so start building the User display."

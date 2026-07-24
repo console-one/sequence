@@ -101,9 +101,9 @@ This degradation is deterministic and predictable. The cutoff boundary is the di
 Compaction is a system-level operation on the document log. The cutoff selection and the compaction execution are both externally provided:
 
 ```ft
-cap CompactionResult.removed
-cap CompactionResult.kept
-cap CompactionResult.compacted
+tool CompactionResult.removed
+tool CompactionResult.kept
+tool CompactionResult.compacted
 ```
 
 ## What This Validates

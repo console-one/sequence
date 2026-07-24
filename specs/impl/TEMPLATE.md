@@ -28,7 +28,7 @@ TypeName = [
 ```ft
 instance = TypeName
 instance << { constructor_field: "value" }
-cap instance.capability1
+tool instance.capability1
 ```
 
 [Prose explaining instantiation pattern.]

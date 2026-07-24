@@ -101,11 +101,11 @@ Index addressing supports both sequential access (iterate all rows) and random a
 Row addition and derived cell definitions are externally provided. Schema validation and cascade recomputation are system-provided:
 
 ```ft
-cap InvoiceRow.product
-cap InvoiceRow.quantity
-cap InvoiceRow.unitPrice
-cap DerivedCell.computation
-cap DerivedCell.value
+tool InvoiceRow.product
+tool InvoiceRow.quantity
+tool InvoiceRow.unitPrice
+tool DerivedCell.computation
+tool DerivedCell.value
 ```
 
 ## What This Validates

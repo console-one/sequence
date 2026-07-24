@@ -68,7 +68,7 @@ BackwardResult = {
 }
 
 backwardInfer = (chain: Chain, finalRequirement: string) -> BackwardResult
-cap backwardInfer
+tool backwardInfer
 ```
 
 If any step in the backward pass produces an unsatisfiable requirement (e.g., the final requirement asks for a field no step produces), the system surfaces this as an unsatisfiable requirement rather than silently failing.

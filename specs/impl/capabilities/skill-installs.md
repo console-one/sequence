@@ -54,10 +54,10 @@ claudeCodeSkills = [
   search = (pattern: string, path?: string) -> [{ file: string, line: number, content: string }]
   
   -- All are external capabilities (Claude Code executes them)
-  cap bash
-  cap readFile
-  cap writeFile
-  cap search
+  tool bash
+  tool readFile
+  tool writeFile
+  tool search
 ]
 ```
 

@@ -95,12 +95,12 @@ Defaults are non-destructive: applying defaults never overwrites a user-provided
 Form fields are filled by external actors -- users or automated processes. Schema validation is system-provided:
 
 ```ft
-cap RegistrationForm.fullName
-cap RegistrationForm.email
-cap RegistrationForm.age
-cap PreferencesForm.theme
-cap PreferencesForm.language
-cap PreferencesForm.notifications
+tool RegistrationForm.fullName
+tool RegistrationForm.email
+tool RegistrationForm.age
+tool PreferencesForm.theme
+tool PreferencesForm.language
+tool PreferencesForm.notifications
 ```
 
 ## What This Validates

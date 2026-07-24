@@ -57,8 +57,8 @@ If no heartbeat arrives and time advances past the window, the next mount (any m
 The heartbeat is an externally-provided value — the worker's process loop mounts it. The task assignment is also external — the orchestrator decides which worker gets which task.
 
 ```ft
-cap Worker.heartbeat
-cap Worker.task
+tool Worker.heartbeat
+tool Worker.task
 ```
 
 ## What This Validates

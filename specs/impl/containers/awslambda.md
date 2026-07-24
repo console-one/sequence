@@ -78,9 +78,9 @@ WorkerCapability = {
 When a worker registers capabilities, the orchestrator re-evaluates which pending tasks are now resolvable. A new capability may create a shorter resolution path for plans that require it as a prerequisite:
 
 ```ft
-cap LambdaWorker.heartbeat
-cap LambdaWorker.task
-cap WorkerCapability.name
+tool LambdaWorker.heartbeat
+tool LambdaWorker.task
+tool WorkerCapability.name
 ```
 
 ## Task Routing

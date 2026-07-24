@@ -103,9 +103,9 @@ Escalation = {
 Escalation narrows attention: the escalation interpreter receives a focused prompt scoped to the gap's subtree. This is the "capture the exception and give it the full state relevant to where that exception occurred" pattern from the original notes.
 
 ```ft
-cap ConvergenceLoop.state
-cap ConvergenceLoop.turns
-cap KernelTask.output
+tool ConvergenceLoop.state
+tool ConvergenceLoop.turns
+tool KernelTask.output
 ```
 
 ## What This Validates

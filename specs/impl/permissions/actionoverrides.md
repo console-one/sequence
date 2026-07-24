@@ -69,8 +69,8 @@ The child's `prev`-based accumulation stands alone. It does not inherit anything
 For debugging, the system supports two reads: raw behavior (what is declared exactly here, with no walk-up) and effective behavior (the result of walk-up resolution). A path with no direct declaration has no raw behavior but may still have effective behavior inherited from an ancestor.
 
 ```ft
-cap Behavior.resolve
-cap Behavior.inspect
+tool Behavior.resolve
+tool Behavior.inspect
 ```
 
 `resolve` performs walk-up and returns the governing behavior. `inspect` returns only the raw declaration at the exact path, or nothing.

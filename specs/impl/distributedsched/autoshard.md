@@ -64,8 +64,8 @@ Writers continue using the original path. The router intercepts and forwards to 
 Pending operations that existed before the split must survive. They are not discarded -- they are carried forward to the appropriate child partition:
 
 ```ft
-cap Partition.router
-cap ChildPartition.keyCount
+tool Partition.router
+tool ChildPartition.keyCount
 ```
 
 A suspended operation referencing the original partition is reassociated with whichever child partition owns the relevant keys. The operation remains retrievable and resolvable.

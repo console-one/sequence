@@ -67,8 +67,8 @@ If capacity drops below the current active count, already-active items are not p
 Submission and completion are external operations:
 
 ```ft
-cap queue.active
-cap queue.done
+tool queue.active
+tool queue.done
 ```
 
 ## Drain Pattern

@@ -94,11 +94,11 @@ Tasks with fully concrete input and many blocked dependents appear at the top of
 The queue operations -- enqueuing, claiming, completing, and deadline management -- are externally provided:
 
 ```ft
-cap Task.status
-cap Task.assignee
-cap Task.output
-cap Task.deadline
-cap Task.labels
+tool Task.status
+tool Task.assignee
+tool Task.output
+tool Task.deadline
+tool Task.labels
 ```
 
 ## What This Validates

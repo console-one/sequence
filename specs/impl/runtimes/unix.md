@@ -102,8 +102,8 @@ PipelineCapability = {
 ```
 
 ```ft
-cap PipelineCapability.stdinInput
-cap PipelineCapability.stdoutOutput
+tool PipelineCapability.stdinInput
+tool PipelineCapability.stdoutOutput
 ```
 
 Two capabilities chained via a pipe produce the correct composite result: `ft cap extract --file report.pdf | ft cap summarize` works as expected.

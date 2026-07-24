@@ -60,8 +60,8 @@ The snapshot output is suitable for external persistence. It can be serialized, 
 
 ```ft
 snapshot1 << { serializable: true }
-cap Snapshot.state
-cap Snapshot.compactedThrough
+tool Snapshot.state
+tool Snapshot.compactedThrough
 ```
 
 A serialized snapshot, when deserialized, produces the same materialized state as the original. This enables recovery points -- the system can be restored to the snapshotted state.

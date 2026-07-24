@@ -92,8 +92,8 @@ TotalD depends on TotalB, which depends on B1 and B2. Changing B1 cascades throu
 Cells are externally provided values. The user writes to cells; the system recalculates derived cells. Column schemas constrain what can be written:
 
 ```ft
-cap Sheet.cells
-cap Sheet.columns
+tool Sheet.cells
+tool Sheet.columns
 
 -- Column B constrained to numbers
 sheet1.columns.B = ColumnSchema

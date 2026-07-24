@@ -44,7 +44,7 @@ This write requires BOTH admin role AND approval status. If the writer is admin 
 Registering an implementation for a function type follows the same pattern. A capability registration is a write, so it is subject to identity-based gating:
 
 ```ft
-cap config.secret when writer.role = "engineer"
+tool config.secret when writer.role = "engineer"
 ```
 
 If the identity is not `"engineer"`, the capability registration suspends. When the identity changes to `"engineer"`, the capability becomes available. This is not a separate authorization mechanism -- it is the same `when` condition used everywhere.

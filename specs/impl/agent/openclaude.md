@@ -39,7 +39,7 @@ ToolDeclaration = {
 ```
 
 ```ft
-cap ToolDeclaration.name
+tool ToolDeclaration.name
 ```
 
 Tools from different sources combine without conflict. The agent is composable -- install a search tool for research tasks, a code tool for programming tasks.

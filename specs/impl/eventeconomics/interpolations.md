@@ -100,9 +100,9 @@ The policy determines both the regression method and the concreteness decay rate
 The historical data that feeds the model is externally provided. The interpolation policy is a user choice:
 
 ```ft
-cap RegressionModel.dataPoints
-cap InterpolationPolicy.method
-cap InterpolationPolicy.decayFactor
+tool RegressionModel.dataPoints
+tool InterpolationPolicy.method
+tool InterpolationPolicy.decayFactor
 ```
 
 ## What This Validates

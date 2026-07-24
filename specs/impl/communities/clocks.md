@@ -95,10 +95,10 @@ The clock tag is how recipients determine ordering. An untagged event is unorder
 Clock operations -- advancement, merging, and event tagging -- are provided by the participant process:
 
 ```ft
-cap ParticipantClock.counter
-cap ParticipantClock.lastEvent
-cap VectorClock.entries
-cap EventRecord.clockValue
+tool ParticipantClock.counter
+tool ParticipantClock.lastEvent
+tool VectorClock.entries
+tool EventRecord.clockValue
 ```
 
 ## What This Validates

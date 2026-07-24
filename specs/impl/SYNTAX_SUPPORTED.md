@@ -8,8 +8,8 @@ When writing ft blocks in impl/ files, use ONLY this syntax. The validation test
 x = expr                              -- assign (overwrite)
 x << expr                             -- narrow (compose)
 delete x                              -- remove
-cap path                              -- register capability
-cap path when cond                    -- conditional capability
+tool path                              -- register capability
+tool path when cond                    -- conditional capability
 policy path: { key: "value" }         -- policy mount
 import name from "./path"             -- import
 export expr                           -- export (in blocks)
@@ -103,12 +103,16 @@ Landed since April (each enforced, covered by src/test/dsl-clauses.test.ts):
 - `when path = "value"` equality gates at statement level (suspend → auto-promote)
 - `while … onBreak …` lifetime gates · `by` provenance · `&` composition
 - The quantifier layer as text: `index <anchor> { over v in set.* where <cond> <body> }` — ∀/∈ with `{var}` tuple interpolation
+- Call-result paths on predicate LHS: `| read(p).content = content @[T_out..next_write(p).T_out) ~survival(exp, 0.001)` — THE write/read identity clause, spec verbatim (identity + temporal equation constraints bind)
+- Refinements after literal-typed properties (union-vs-predicate disambiguated by bounded lookahead; literal unions unbroken)
+- Property-level gates: `task: string while alive = true onBreak events.taskExpired = true` and `<< { status: "approved" when currentApprovals = 2 }` — LOWERED to statement gates (one semantics); gate conditions resolve lexically against the parent object's declared siblings
+- `forall c : set . <comparison>` parses in refinement position (set = ident or call; NOTE: stored as a constraint for the runtime layer — NOT enforced at admission yet)
+- The recovered spec corpus itself: `cap` → `tool` applied (completing the 5ef53e9 rename); PARSE_LEDGER 98 → 26
 
 ## STILL NOT SUPPORTED (the honest gap list — see PARSE_LEDGER.json for the 98 spec files these block)
 - `[ ]` ordered-block syntax with `key = value` entries, docs strings, and `ref("path")` rows
-- Call-result paths on predicate LHS: `| read(p).content = content` (the write/read identity clause — identity/equation constraints EXIST in the walker; the parse production for call-path LHS does not)
-- `forall` inside property-position refinements (`|` there parses as a type union; forall works only where parseRefinement is reached)
-- `when`-equality inside fn-typed object properties (works at statement level)
+- Derived predicates with parenthesized comparison exprs: `alive: boolean | alive = (prev.heartbeat > _rt - prev.livenessWindow)` (needs expression-valued equations + cascade recompute — design work, not a parse patch)
+- `forall` ADMISSION enforcement (parses; constraint stored, not checked at bind time)
 - Strict `>` `<` and `!=` in refinements (only exact-semantics >= / <= are mapped; strict bounds need a checker decision)
 - `HAS` / `SATISFIES` predicate semantics (parse, but no verified constraint mapping)
 - Negative number literals (`-1` does not tokenize as a literal)

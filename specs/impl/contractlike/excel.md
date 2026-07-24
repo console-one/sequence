@@ -73,9 +73,9 @@ Change tracking is inherent in the mount model. Each mount produces a diff. If A
 The read and write operations are registered as capabilities so backward inference can discover them:
 
 ```ft
-cap Spreadsheet.readCell
-cap Spreadsheet.writeCell
-cap Spreadsheet.listCells
+tool Spreadsheet.readCell
+tool Spreadsheet.writeCell
+tool Spreadsheet.listCells
 ```
 
 When the agent needs a cell's value, the system traces backward to `readCell`. When a cell has a gap, the system identifies `writeCell` as the operation that can fill it.

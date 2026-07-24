@@ -103,11 +103,11 @@ After unlocking, any write that was suspended because `title.editable = false` n
 Editability flags and edit locks are externally controlled -- the document author or system policy sets them:
 
 ```ft
-cap Section.editable
-cap Section.content
-cap Section.budget
-cap EditLock.holder
-cap EditLock.section
+tool Section.editable
+tool Section.content
+tool Section.budget
+tool EditLock.holder
+tool EditLock.section
 ```
 
 ## What This Validates

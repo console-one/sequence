@@ -118,8 +118,8 @@ Invertibility of composites depends on the join mode and the constituent forms. 
 A capability registers its interpolation function as part of its type contract. The function is not a separate metadata layer -- it is part of the type:
 
 ```ft
-cap evaluate
-cap invert
+tool evaluate
+tool invert
 ```
 
 ## What This Validates

@@ -55,7 +55,7 @@ An incoming datagram is parsed according to the configured format and mounted as
 ```ft
 inbound = (datagram: Datagram) -> { data: string, source: NetAddress }
 
-cap inbound
+tool inbound
 ```
 
 The converter does not buffer, reorder, or deduplicate. If datagrams arrive as B, A, C, the converter processes B, then A, then C -- each independently. There is no "waiting for A before processing B."
@@ -67,7 +67,7 @@ Internal values are serialized according to the configured format and sent as UD
 ```ft
 outbound = (data: string) -> { datagram: Datagram }
 
-cap outbound
+tool outbound
 ```
 
 The converter serializes the internal value, wraps it in a datagram, and sends it. UDP provides no delivery confirmation -- the send completes without knowing whether the remote system received it.

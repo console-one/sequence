@@ -78,10 +78,10 @@ Operations on `employeeDB` do not affect `departmentDB` and vice versa. Each has
 Operations are registered as capabilities so the system can discover them when the agent needs data:
 
 ```ft
-cap employeeDB.query
-cap employeeDB.insert
-cap employeeDB.update
-cap employeeDB.remove
+tool employeeDB.query
+tool employeeDB.insert
+tool employeeDB.update
+tool employeeDB.remove
 ```
 
 When the agent declares it needs employee data (an array of rows matching `EmployeeRow`), backward inference traces to `employeeDB.query`. The filter conditions surface as optional gaps -- the agent sees: "query the employees table, optionally filter by department, salary range, etc."

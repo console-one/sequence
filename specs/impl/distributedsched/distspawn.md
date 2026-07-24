@@ -72,9 +72,9 @@ The timeout condition is: when the current time exceeds the spawn time plus `boo
 The spawn system exposes capabilities for external processes to query and for the orchestrator to manage:
 
 ```ft
-cap Worker.capability
-cap Worker.status
-cap Worker.heartbeat
+tool Worker.capability
+tool Worker.status
+tool Worker.heartbeat
 ```
 
 Speculative planning includes spawning workers at their declared confidence. Actual dispatch requires `status = "online"`. This two-tier approach lets the scheduler plan ahead while preventing execution against non-existent workers.

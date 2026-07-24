@@ -37,7 +37,7 @@ CostModel = {
   estimateCost: (provider: string, inputTokens: number, outputTokens: number) -> { estimatedCost: number >= 0 }
 }
 
-cap CostModel.estimateCost
+tool CostModel.estimateCost
 ```
 
 The gate is predictive: `estimatedCost + spent <= budget`. If this projected state exceeds the budget, the mount suspends. Same pattern as the policy builder's `getNextValue(observed + delta)`.
@@ -83,7 +83,7 @@ purchased = CapabilityContract
 purchased << { providerId: "acme-llm", apiKey: "sk-abc123" }
 purchased << { pricing: { costPerCall: 0.01, costPerInputToken: 0, costPerOutputToken: 0.00001 } }
 purchased << { limits: { maxCalls: 10000, maxTokens: 1000000, expiresAt: 1735689600000 } }
-cap purchased.capabilities
+tool purchased.capabilities
 ```
 
 The contract's limits become while-clauses — the capabilities are available WHILE the allocation isn't exhausted and the contract hasn't expired.
@@ -168,7 +168,7 @@ Credits are part of the environment manifest. Persisted via snapshot. History us
 ```ft
 env.credits = CreditAccount
 env.credits << { balance: 10.00, spent: 0, budget: 10.00, currency: "USD" }
-cap env.credits.estimateCost
+tool env.credits.estimateCost
 ```
 
 ## What This Validates

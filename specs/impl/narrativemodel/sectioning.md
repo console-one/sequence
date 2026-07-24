@@ -91,10 +91,10 @@ A section marked "expand" can have detail added. A section marked "compress" can
 Section content, budgets, and lock states are externally controlled:
 
 ```ft
-cap Section.content
-cap Section.budget
-cap Section.locked
-cap Section.mutations
+tool Section.content
+tool Section.budget
+tool Section.locked
+tool Section.mutations
 ```
 
 ## What This Validates

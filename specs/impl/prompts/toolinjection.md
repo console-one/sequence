@@ -85,9 +85,9 @@ StateUpdate = {
 The LLM's response is the union of all potential statements across all called tools. Each tool call decomposes into specific state updates.
 
 ```ft
-cap TurnToolSet.gapFills
-cap TurnToolSet.capabilities
-cap TurnToolSet.expansion
+tool TurnToolSet.gapFills
+tool TurnToolSet.capabilities
+tool TurnToolSet.expansion
 ```
 
 ## No Global Registry

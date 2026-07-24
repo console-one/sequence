@@ -110,9 +110,9 @@ Writes performed under the lock are propagated back to the partition owner. When
 ```ft
 writePermission = ref(lock1)
 
-cap Lock.heartbeat
-cap Lock.status
-cap LockOffer.status
+tool Lock.heartbeat
+tool Lock.status
+tool LockOffer.status
 ```
 
 Operations conditioned on the lock being active break when the lock revokes. Write permission, routing rules, in-flight tasks -- everything gated on the lock's existence invalidates in the same logical step. After revocation, the partition is available for new lock offers.

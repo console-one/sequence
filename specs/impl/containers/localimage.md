@@ -52,7 +52,7 @@ LocalCapability = {
 ```
 
 ```ft
-cap LocalCapability.name when permitted = true
+tool LocalCapability.name when permitted = true
 ```
 
 A filesystem capability scoped to `/home/user/projects` allows reads within that directory. An attempt to read `/etc/passwd` is denied. The user explicitly configures the scope; nothing is exposed by default.
@@ -135,7 +135,7 @@ InstalledTool = {
 ```
 
 ```ft
-cap InstalledTool.name when available = true
+tool InstalledTool.name when available = true
 ```
 
 Installation is user-initiated. The system may suggest useful capabilities but never installs without consent.

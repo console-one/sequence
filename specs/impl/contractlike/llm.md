@@ -124,9 +124,9 @@ The estimate-vs-actual comparison is enforced through predicate observation on t
 The complete operation is registered as a capability. When backward inference identifies a need for generated text, it discovers available LLM providers through structural matching:
 
 ```ft
-cap claude.complete
-cap gpt4.complete
-cap localLlama.complete
+tool claude.complete
+tool gpt4.complete
+tool localLlama.complete
 ```
 
 When a gap requires `{ text: string }`, the system finds all capabilities whose output type includes `text: string`. Each matching provider is evaluated against the task's constraints. The within-budget, within-capacity, within-time provider is selected automatically.

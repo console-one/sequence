@@ -87,10 +87,10 @@ Adding a worker makes it immediately eligible for compatible unassigned tasks. R
 workerB = SwarmWorker
 workerB << { capabilities: "parse", status: "idle", heartbeat: 1000, heartbeatWindow: 5000 }
 
-cap Task.status
-cap Task.assignedTo
-cap SwarmWorker.capabilities
-cap SwarmWorker.heartbeat
+tool Task.status
+tool Task.assignedTo
+tool SwarmWorker.capabilities
+tool SwarmWorker.heartbeat
 ```
 
 The swarm adapts to capacity changes in real time. There is no central dispatcher to bottleneck -- matching is a consequence of the type relationships between tasks and workers.

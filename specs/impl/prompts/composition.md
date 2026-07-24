@@ -137,8 +137,8 @@ Concreteness is live -- it updates as segments are filled or refined. The ratio 
 When a prompt with unfilled gaps is mounted at runtime, those gaps surface as user-facing blockers. The user is prompted to fill them, with the type and constraints shown.
 
 ```ft
-cap PromptTemplate.segments
-cap PromptSegment.content
+tool PromptTemplate.segments
+tool PromptSegment.content
 ```
 
 The segment list is a capability (inspectable), and each segment's content is a capability (fillable). Filling a segment's content changes its kind from open to concrete and updates the template's concreteness.

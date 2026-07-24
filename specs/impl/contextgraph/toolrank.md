@@ -90,10 +90,10 @@ Tools are ordered by rank, highest first. The top N (up to budget) are expanded.
 Tracing from a positive outcome backward through the tool invocation log identifies which tools contributed. Each contributing tool's attribution counter increases:
 
 ```ft
-cap ToolUsage.displays
-cap ToolUsage.selections
-cap ToolUsage.attributions
-cap ToolRank.rank
+tool ToolUsage.displays
+tool ToolUsage.selections
+tool ToolUsage.attributions
+tool ToolRank.rank
 ```
 
 Backward attribution walks the reference graph: outcome -> state that produced it -> tool that produced that state -> earlier tools in the chain. Every tool on the causal path receives attribution credit. This is the same graph structure used by backlinks, applied to tool invocation history.

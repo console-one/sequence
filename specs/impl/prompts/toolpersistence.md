@@ -102,9 +102,9 @@ GapEvolution = {
 Gap evolution across frames makes convergence (or lack thereof) visible. A gap that persists across many frames is stuck. A gap surface that is shrinking indicates progress.
 
 ```ft
-cap FrameSnapshot.tokenMap
-cap FrameSnapshot.gaps
-cap FrameSnapshot.tools
+tool FrameSnapshot.tokenMap
+tool FrameSnapshot.gaps
+tool FrameSnapshot.tools
 ```
 
 ## What This Validates

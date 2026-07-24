@@ -98,9 +98,9 @@ The compressed form conveys the essential structure without consuming unnecessar
 The catalog supports structural subtype checks. Type B is a subtype of type A if B satisfies all of A's constraints and adds more:
 
 ```ft
-cap TypeCatalog.types
-cap TypeCatalog.reverseIndex
-cap TypeScope.hoisted
+tool TypeCatalog.types
+tool TypeCatalog.reverseIndex
+tool TypeScope.hoisted
 ```
 
 Subtype relationships enable type-based tool discovery to work across specificity levels. A search for tools accepting "Model" returns tools accepting "Model" and tools accepting any supertype of "Model".

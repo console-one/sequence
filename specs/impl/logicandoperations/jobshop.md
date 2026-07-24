@@ -143,11 +143,11 @@ drills << { kind: "drill", instances: 2 }
 The externally-provided operations: starting an operation (claiming a machine and recording start time) and completing an operation (releasing the machine and recording end time):
 
 ```ft
-cap Operation.startTime
-cap Operation.endTime
-cap Operation.status
-cap MachineSlot.currentOp
-cap MachineSlot.busy
+tool Operation.startTime
+tool Operation.endTime
+tool Operation.status
+tool MachineSlot.currentOp
+tool MachineSlot.busy
 ```
 
 ## What This Validates

@@ -69,7 +69,7 @@ ResultReport = {
 ```
 
 ```ft
-cap RemoteOneShot.report
+tool RemoteOneShot.report
 ```
 
 The orchestrator receives the result correlated to the original task. After reporting, the agent becomes eligible for cleanup.

@@ -181,7 +181,7 @@ export type PrimitiveConstraint =
   ;
 
 export type LiteralExpr = { kind: 'literal'; value: string | number | boolean | null };
-export type ObjectExpr = { kind: 'object'; properties: { key: string; value: Expr; optional: boolean }[] };
+export type ObjectExpr = { kind: 'object'; properties: { key: string; value: Expr; optional: boolean; modifiers?: Modifiers }[] };
 export type ArrayElement = { expr: Expr; spread: boolean };
 export type ArrayExpr = { kind: 'array'; element: Expr; minLength?: number; maxLength?: number; elements?: ArrayElement[] };
 
@@ -205,7 +205,7 @@ export type IntersectionExpr = { kind: 'intersection'; members: Expr[] };
 export type RefExpr = { kind: 'ref'; path: string };
 export type SnapshotExpr = { kind: 'snapshot'; path: string };
 export type NameExpr = { kind: 'name'; name: string };
-export type CallExpr = { kind: 'call'; fn: string; args: Expr[] };
+export type CallExpr = { kind: 'call'; fn: string; args: Expr[]; resultPath?: string[] };
 /**
  * `project(binding in set, mapper).where(cond)` — iteration over a
  * path pattern. The set contains one or more `{name}` wildcards

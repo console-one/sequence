@@ -51,7 +51,7 @@ LocalCap = {
 ```
 
 ```ft
-cap LocalCap.name when available = true
+tool LocalCap.name when available = true
 ```
 
 Each capability is discoverable with its input and output types. The agent can reason about what it can do and what each operation requires.

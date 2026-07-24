@@ -137,11 +137,11 @@ Independence is structural: each branch is a separate Plan instance with its own
 Branch creation and assumption substitution are user actions:
 
 ```ft
-cap Plan.name
-cap Plan.revenue
-cap Plan.costs
-cap Divergence.path
-cap Divergence.branchValue
+tool Plan.name
+tool Plan.revenue
+tool Plan.costs
+tool Divergence.path
+tool Divergence.branchValue
 ```
 
 ## What This Validates

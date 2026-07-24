@@ -78,8 +78,8 @@ poolA << { maxConnections: 5, target: "api://service-a" }
 poolB = Pool
 poolB << { maxConnections: 20, target: "db://warehouse" }
 
-cap Pool.maxConnections
-cap Pool.activeCount
+tool Pool.maxConnections
+tool Pool.activeCount
 ```
 
 Pool A reaching capacity has no effect on Pool B. Their counters, suspensions, and resumptions are entirely separate.

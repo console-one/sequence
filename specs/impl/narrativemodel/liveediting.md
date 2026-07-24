@@ -97,11 +97,11 @@ The log is immutable after write. Edits are never removed, modified, or reordere
 Edits are submitted by external writers. Version tracking and conflict detection are system-provided:
 
 ```ft
-cap Edit.path
-cap Edit.value
-cap Edit.editor
-cap Edit.baseVersion
-cap PathVersion.version
+tool Edit.path
+tool Edit.value
+tool Edit.editor
+tool Edit.baseVersion
+tool PathVersion.version
 ```
 
 ## What This Validates

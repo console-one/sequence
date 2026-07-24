@@ -32,7 +32,7 @@ FileCapability = {
 ```
 
 ```ft
-cap FileCapability.operation
+tool FileCapability.operation
 ```
 
 Large file operations use streaming to prevent OOM. Reading a 1GB file does not require 1GB of resident memory -- the runtime processes it in bounded-size chunks.

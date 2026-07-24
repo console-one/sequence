@@ -68,6 +68,69 @@ export type ImportResolver = (path: string) => string | null;
  * what. Implemented via a Proxy that wraps `seq` so no call site in
  * the walker needs to know it exists.
  */
+/** If stmt is an assign/narrow of an object with GATED properties,
+ *  return the lowered statement list: the parent statement (gated
+ *  SCHEMA properties kept for shape, gates stripped; gated CONCRETE
+ *  properties removed — their values must wait behind the gate) plus
+ *  one child statement per gated property carrying the modifiers.
+ *  Gate conditions resolve LEXICALLY: a condition path whose first
+ *  segment names a sibling property is prefixed with the parent path
+ *  (`while alive = true` inside Worker means Worker.alive); anything
+ *  else (`events.taskExpired`, `_rt`) stays absolute. Null when there
+ *  is nothing to lower — the common path is untouched. */
+function lowerGatedProperties(stmt: Statement, seq?: Sequence): Statement[] | null {
+  if (stmt.kind !== 'assign' && stmt.kind !== 'narrow') return null;
+  const v = (stmt as any).value;
+  if (!v || v.kind !== 'object') return null;
+  const gated = v.properties.filter((p: any) => p.modifiers);
+  if (gated.length === 0) return null;
+
+  const parentPath = (stmt as any).path as string;
+  // Lexical scope = the statement's own properties UNION the target's
+  // already-declared properties (a narrow names only what it writes,
+  // but its gates may reference any sibling the schema declares).
+  const siblingKeys = new Set<string>(v.properties.map((p: any) => p.key));
+  const declared = seq?.typeAt(parentPath);
+  if (declared) {
+    for (const c of declared.constraints) {
+      if (c.op === 'property' && typeof c.args[0] === 'string') siblingKeys.add(c.args[0]);
+    }
+  }
+  const scopePath = (path: string): string =>
+    siblingKeys.has(path.split('.')[0]) ? `${parentPath}.${path}` : path;
+  const scopeCondition = (c: any): any => {
+    if (!c || typeof c !== 'object') return c;
+    if (typeof c.path === 'string') return { ...c, path: scopePath(c.path) };
+    if (c.lhs?.kind === 'name' && typeof c.lhs.name === 'string') {
+      return { ...c, lhs: { ...c.lhs, name: scopePath(c.lhs.name) } };
+    }
+    return c;
+  };
+  const scopeModifiers = (m: any): any => ({
+    ...m,
+    ...(m.when ? { when: m.when.map(scopeCondition) } : {}),
+    ...(m.while ? { while: m.while.map(scopeCondition) } : {}),
+    ...(m.onBreak ? { onBreak: { ...m.onBreak, path: scopePath(m.onBreak.path) } } : {}),
+  });
+
+  const parentProps = v.properties
+    .filter((p: any) => !p.modifiers || !isConcrete(p.value))
+    .map((p: any) => (p.modifiers ? { key: p.key, value: p.value, optional: p.optional } : p));
+  const out: Statement[] = [];
+  if (parentProps.length > 0) {
+    out.push({ ...(stmt as any), value: { kind: 'object', properties: parentProps } });
+  }
+  for (const p of gated) {
+    out.push({
+      kind: stmt.kind,
+      path: `${parentPath}.${p.key}`,
+      value: p.value,
+      modifiers: scopeModifiers(p.modifiers),
+    } as unknown as Statement);
+  }
+  return out;
+}
+
 export function walk(
   statements: Statement[],
   seqIn: Sequence,
@@ -78,7 +141,20 @@ export function walk(
   const mounts: MountResult[] = [];
   const comments: { text: string; line: number }[] = [];
 
-  for (const stmt of statements) {
+  for (const rawStmt of statements) {
+    // Property-gate lowering: an assign/narrow whose object value has
+    // gated properties (`{ task: string while alive = true }`) splits
+    // into the parent statement minus those properties plus one child
+    // statement per gated property carrying its own modifiers — so
+    // property gates ARE statement gates, one semantics.
+    const lowered = lowerGatedProperties(rawStmt, seq);
+    if (lowered) {
+      const sub = walk(lowered, seq, resolve);
+      mounts.push(...sub.mounts);
+      comments.push(...sub.comments);
+      continue;
+    }
+    const stmt = rawStmt;
     // Glob expansion: if path contains .*, expand to all existing children
     // and mount the pattern for future children at the parent prefix
     if ('path' in stmt && typeof (stmt as any).path === 'string' && (stmt as any).path.includes('.*')) {
@@ -1743,7 +1819,10 @@ function exprToPath(expr: any): string {
   if (expr.kind === 'name') return expr.name;
   if (expr.kind === 'path') return expr.segments.join('.');
   if (expr.kind === 'temporal_ref') return `${expr.fn}._rt.${expr.boundary}`;
-  if (expr.kind === 'call') return `${expr.fn}(${expr.args.map(exprToPath).join(',')})`;
+  if (expr.kind === 'call') {
+    const base = `${expr.fn}(${expr.args.map(exprToPath).join(',')})`;
+    return expr.resultPath?.length ? `${base}.${expr.resultPath.join('.')}` : base;
+  }
   return String(expr.value ?? expr.name ?? '');
 }
 
@@ -1795,7 +1874,13 @@ function exprToExpr(expr: any): any {
     if (expr.op === '+') return { add: [exprToExpr(expr.lhs), exprToExpr(expr.rhs)] };
     if (expr.op === '*') return { mul: [exprToExpr(expr.lhs), exprToExpr(expr.rhs)] };
   }
-  if (expr.kind === 'call') return { fn: expr.fn, arg: exprToExpr(expr.args[0]) };
+  if (expr.kind === 'call') {
+    // A call with a result path (`next_write(p).T_out`) is a SYMBOLIC
+    // reference into a future call's output — pass it through as the
+    // same path string the equation/temporal layer speaks.
+    if (expr.resultPath?.length) return exprToPath(expr);
+    return { fn: expr.fn, arg: exprToExpr(expr.args[0]) };
+  }
   return expr.name ?? expr.value ?? 0;
 }
 

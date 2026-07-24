@@ -61,8 +61,8 @@ AuditQuery = {
 ```
 
 ```ft
-cap AuditQuery.since
-cap AuditQuery.prefix
+tool AuditQuery.since
+tool AuditQuery.prefix
 ```
 
 Querying "since 2" returns only records with `seq >= 2`. Filtering by prefix `config.` returns only records whose path starts with `config.`. Invalidated records are excluded from active queries automatically.

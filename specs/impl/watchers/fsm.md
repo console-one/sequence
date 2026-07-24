@@ -79,10 +79,10 @@ orderA << { paymentRef: "pay-001" }
 Transitions are externally triggered. Each transition's required data is a capability:
 
 ```ft
-cap order.state
-cap order.paymentRef
-cap order.tracking
-cap order.deliveredAt
+tool order.state
+tool order.paymentRef
+tool order.tracking
+tool order.deliveredAt
 ```
 
 ## What This Validates

@@ -85,9 +85,9 @@ newPredicate << { name: "highCapModel", requiredFields: "name,provider,maxTokens
 The system tracks how often each index is queried. Indexes that are frequently queried are high-value. Indexes that are never queried are candidates for deactivation:
 
 ```ft
-cap SecondaryIndex.matchingPaths
-cap SecondaryIndex.queryCount
-cap StructuralPredicate.active
+tool SecondaryIndex.matchingPaths
+tool SecondaryIndex.queryCount
+tool StructuralPredicate.active
 ```
 
 The decision about which indexes to keep is policy-driven. The exact policy -- whether based on query frequency thresholds, cost-benefit analysis, or explicit configuration -- is specified externally. The system provides the data (`queryCount`) for the policy to act on.

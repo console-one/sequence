@@ -121,13 +121,13 @@ These properties are structural -- they hold for any sequence of operations, any
 The data type operations -- counter increments, set mutations, register writes, and map updates -- are provided by participant processes:
 
 ```ft
-cap Counter.value
-cap Counter.delta
-cap MergeSet.elements
-cap MergeSet.policy
-cap Register.value
-cap Register.timestamp
-cap MergeMap.entries
+tool Counter.value
+tool Counter.delta
+tool MergeSet.elements
+tool MergeSet.policy
+tool Register.value
+tool Register.timestamp
+tool MergeMap.entries
 ```
 
 ## What This Validates

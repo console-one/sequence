@@ -30,7 +30,7 @@ The fetch capability takes a cursor and returns a page result. It is the resolve
 
 ```ft
 fetchPage = (cursor: string) -> PageResult
-cap fetchPage
+tool fetchPage
 ```
 
 When a page gap exists and a cursor is available, the system matches the gap to this capability.
