@@ -107,7 +107,7 @@ Landed since April (each enforced, covered by src/test/dsl-clauses.test.ts):
 - Refinements after literal-typed properties (union-vs-predicate disambiguated by bounded lookahead; literal unions unbroken)
 - Property-level gates: `task: string while alive = true onBreak events.taskExpired = true` and `<< { status: "approved" when currentApprovals = 2 }` — LOWERED to statement gates (one semantics); gate conditions resolve lexically against the parent object's declared siblings
 - `forall c : set . <comparison>` parses in refinement position (set = ident or call; NOTE: stored as a constraint for the runtime layer — NOT enforced at admission yet)
-- The recovered spec corpus itself: `cap` → `tool` applied (completing the 5ef53e9 rename); PARSE_LEDGER 98 → 26
+- The recovered spec corpus itself: `cap` → `tool` applied (completing the 5ef53e9 rename); PARSE_LEDGER 98 → 14 (2026-07-24; the 14 survivors are design-gated: derived predicates with computed exprs, reader-scoped conditions, converter meta-shapes)
 
 ## STILL NOT SUPPORTED (the honest gap list — see PARSE_LEDGER.json for the 98 spec files these block)
 - `[ ]` ordered-block syntax with `key = value` entries, docs strings, and `ref("path")` rows

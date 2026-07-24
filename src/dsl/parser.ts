@@ -660,7 +660,10 @@ export class Parser {
   private parseBlock(): Expr {
     const stmts: Statement[] = [];
     while (!this.at('RBRACE') && !this.at('EOF')) {
-      while (this.match('SEMICOLON')) {}
+      // Commas are accepted alongside semicolons/newlines: the patch
+      // form `m << { total = 0, updateCount = 0 }` writes statements
+      // comma-separated, object-literal style (2026-07-24).
+      while (this.match('SEMICOLON') || this.match('COMMA')) {}
       this.skipComments(stmts);
       if (this.at('RBRACE')) break;
       stmts.push(this.parseStatement());
@@ -758,6 +761,7 @@ export class Parser {
 
   private parseArrayExpr(): Expr {
     this.expect('LBRACKET');
+    this.skipComments(); // narrative rows inside [ ] blocks
     if (this.at('RBRACKET')) {
       this.advance();
       return { kind: 'array', element: { kind: 'primitive', base: 'null', constraints: [] } };
