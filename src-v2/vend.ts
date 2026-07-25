@@ -48,7 +48,7 @@ import { Sequence } from './sequence';
 import {
   type Type, constraintOf, isNever,
 } from '../src/type';
-import { compose as composeTypes, conjugateUpdate } from '../src/compose';
+import { compose as composeTypes, conjugateUpdate, check } from '../src/compose';
 import { renderTypeFt } from '../src/hoist';
 import { timeHorizon } from './validity';
 import { receiveDocument } from './receive-doc';
@@ -82,6 +82,17 @@ export type VendResult = {
 };
 
 const approxTokens = (s: string): number => Math.ceil(s.length / 4);
+
+/** Render a fn type's signature halves in the receivable form. */
+function fnSignature(type: Type): { params: string; returns: string } {
+  const paramT = constraintOf(type, 'param')?.args[0] as Type | undefined;
+  const returnsT = constraintOf(type, 'returns')?.args[0] as Type | undefined;
+  const params = paramT
+    ? renderTypeFt(paramT).replace(/\s+/g, ' ').replace(/^\{\s*/, '(').replace(/\s*\}$/, ')')
+    : '()';
+  const returns = returnsT ? renderTypeFt(returnsT).replace(/\s+/g, ' ') : '{ ok: true }';
+  return { params, returns };
+}
 
 /** Collapse whitespace for single-line string binds (elected narrative
  *  variants are prose; the emitted bind must stay one statement). */
@@ -233,12 +244,7 @@ export function vend(seq: Sequence, req: VendRequest = {}): VendResult {
   const vended: string[] = [];
   for (let i = 0; i < capped.length; i++) {
     const { path, type } = capped[i];
-    const paramT = constraintOf(type, 'param')?.args[0] as Type | undefined;
-    const returnsT = constraintOf(type, 'returns')?.args[0] as Type | undefined;
-    const params = paramT
-      ? renderTypeFt(paramT).replace(/\s+/g, ' ').replace(/^\{\s*/, '(').replace(/\s*\}$/, ')')
-      : '()';
-    const returns = returnsT ? renderTypeFt(returnsT).replace(/\s+/g, ' ') : '{ ok: true }';
+    const { params, returns } = fnSignature(type);
 
     const block: string[] = [`${path} = ${params} -> ${returns}${latencySuffix(seq, path)}`];
     const desc = descOf(path);
@@ -274,8 +280,23 @@ export function vend(seq: Sequence, req: VendRequest = {}): VendResult {
     const blockText = block.join('\n');
 
     // Budget check BEFORE emitting: overflow is spoken, never a silent
-    // mid-definition cut.
+    // mid-definition cut. A tool whose FULL form does not fit is first
+    // offered as a receivable STUB (looser types are never wrong) with
+    // its complete definition behind a redeemable type-expansion token
+    // (V16/beat 8); only if even the stub cannot fit is it omitted.
     if (spent + approxTokens(blockText) > budget) {
+      const token = `[[type:${path} : expand for the full definition]]`;
+      const stub = [
+        `${path} = (input: { }) -> { }`,
+        `${path}._expandType = ${quote(token)}`,
+      ].join('\n');
+      if (spent + approxTokens(stub) <= budget) {
+        expandTokens.push(token);
+        emit(stub);
+        emit('');
+        vended.push(path);
+        continue;
+      }
       omitted.push(...capped.slice(i).map((c) => c.path));
       break;
     }
@@ -375,15 +396,24 @@ export type ExpandResult =
   | { ok: true; content: string; costTokens: number }
   | { ok: false; reason: 'unknown-session' | 'expired' | 'unknown-token'; token?: string };
 
-/** Redeem an expansion token through a live session: the full document
- *  content plus its honest cost. Unknown tokens are refused BY NAME. */
+/** Redeem an expansion token through a live session: the full content
+ *  plus its honest cost. `[[doc:…]]` yields the document text;
+ *  `[[type:…]]` yields the tool's COMPLETE receivable definition line
+ *  (the stub's full form). Unknown tokens are refused BY NAME. */
 export function expand(seq: Sequence, sessionId: string, token: string): ExpandResult {
   const expiresAt = sessionExpiry(seq, sessionId);
   if (expiresAt === undefined) return { ok: false, reason: 'unknown-session' };
   if (seq.now() > expiresAt) return { ok: false, reason: 'expired' };
-  const m = /^\[\[doc:([^\s:]+) : /.exec(token);
+  const m = /^\[\[(doc|type):([^\s:]+) : /.exec(token);
   if (!m) return { ok: false, reason: 'unknown-token', token };
-  const doc = electLabel(seq, m[1], Infinity);
+  if (m[1] === 'type') {
+    const type = seq.rawTypeAt(m[2]);
+    if (type?.kind !== 'fn') return { ok: false, reason: 'unknown-token', token };
+    const { params, returns } = fnSignature(type);
+    const line = `${m[2]} = ${params} -> ${returns}${latencySuffix(seq, m[2])}`;
+    return { ok: true, content: line, costTokens: approxTokens(line) };
+  }
+  const doc = electLabel(seq, m[2], Infinity);
   if (!doc) return { ok: false, reason: 'unknown-token', token };
   return { ok: true, content: doc.text, costTokens: approxTokens(doc.text) };
 }
@@ -626,7 +656,20 @@ export async function callThroughSession(
   if (frame?.tools && !frame.tools.includes(fn) && !fn.startsWith('_sessions.')) {
     return { ok: false, reason: 'not-in-frame' };
   }
-  if (seq.rawTypeAt(fn)?.kind !== 'fn') return { ok: false, reason: 'stale-frame' };
+  const fnType = seq.rawTypeAt(fn);
+  if (fnType?.kind !== 'fn') return { ok: false, reason: 'stale-frame' };
+  // Refinements ENFORCE at the call (V14): args are validated against
+  // the param type — pattern/min/max/literal-union — with the shared
+  // check(), before the impl runs and before any observation (a
+  // caller's type error is not the endpoint's unreliability).
+  const paramT = constraintOf(fnType, 'param')?.args[0] as Type | undefined;
+  if (paramT) {
+    const c = check(paramT, args ?? {});
+    if (!c.ok) {
+      const gap = (c as { gaps?: Array<{ path?: string; reason?: string }> }).gaps?.[0];
+      return { ok: false, reason: `invalid-args: ${gap?.path ?? ''} ${gap?.reason ?? 'type mismatch'}`.trim() };
+    }
+  }
   const selfObserving = (seq.impls.get(fn) as { observes?: boolean } | undefined)?.observes === true;
   const t0 = performance.now();
   let ok = false;

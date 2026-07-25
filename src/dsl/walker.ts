@@ -683,7 +683,10 @@ function wrapSeqWithDefaultOpts(seq: Sequence, defaultOpts: BlockOpts): Sequence
 // AST → FT Type conversion
 // ═══════════════════════════════════════════════════════════════════════
 
-function toType(expr: Expr): Type {
+/** Pure AST→Type mapping — EXPORTED as the shared conversion for both
+ *  engines (src-v2/receive-doc consumes it): one vocabulary, one
+ *  mapping, no per-engine drift in what a type expression means. */
+export function toType(expr: Expr): Type {
   switch (expr.kind) {
     case 'primitive':
       return buildPrimitive(expr.base, expr.constraints);

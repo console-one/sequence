@@ -32,9 +32,10 @@
 
 import { parse } from '../src/dsl/parser';
 import type { Statement, Expr, FunctionExpr } from '../src/dsl/ast';
+import { toType } from '../src/dsl/walker';
 import { FT } from '../src/builder';
 import {
-  type Type, type Constraint, createType, param, returns, lte, distribution,
+  type Constraint, createType, param, returns, lte, distribution,
 } from '../src/type';
 import type { Sequence } from './sequence';
 import { receiveCall } from './receive-calls';
@@ -48,39 +49,11 @@ export type ReceiveDocResult = {
   errors: string[];
 };
 
-// ── type expressions → Type (the vend emission subset) ──────────────
-
-function typeFromExpr(e: Expr): Type {
-  switch (e.kind) {
-    case 'primitive':
-      if (e.base === 'string') return FT.string().toType();
-      if (e.base === 'number') return FT.number().toType();
-      if (e.base === 'boolean') return FT.boolean().toType();
-      return FT.null().toType();
-    case 'literal': {
-      const v = e.value;
-      if (typeof v === 'string') return FT.string(v).toType();
-      if (typeof v === 'number') return FT.number(v).toType();
-      if (typeof v === 'boolean') return FT.boolean(v).toType();
-      return FT.null().toType();
-    }
-    case 'object': {
-      const shape: Record<string, unknown> = {};
-      for (const p of e.properties) {
-        shape[p.optional ? `${p.key}?` : p.key] = typeFromExpr(p.value);
-      }
-      return FT.object(shape as never).toType();
-    }
-    case 'array':
-      return FT.array(typeFromExpr(e.element)).toType();
-    case 'refined':
-      // v0 of the doc subset: the base type mounts; refinement
-      // predicates on received definitions are a later stage. The base
-      // is honest (never wrong, only looser).
-      return typeFromExpr((e as { base: Expr }).base ?? e);
-  }
-  throw new Error(`unsupported type expression '${e.kind}' in a definition`);
-}
+// ── type expressions → Type: the SHARED walker mapping ──────────────
+// One AST→Type conversion serves both engines (src/dsl/walker toType):
+// primitives with inline constraints, objects, arrays, unions, literal
+// types, and refinement predicates (MATCHES/IN/>=/<= — the exact-
+// semantics subset) all mount with their constraints intact.
 
 /** The parsed `~family(params)` suffix → a distribution constraint on
  *  the definition. `survival(exp, r)` is the spec's positional form for
@@ -192,12 +165,12 @@ export async function receiveDocument(seq: Sequence, source: string): Promise<Re
           if (expr.kind === 'function') {
             const shape: Record<string, unknown> = {};
             for (const p of expr.params) {
-              shape[p.optional ? `${p.name}?` : p.name] = typeFromExpr(p.type);
+              shape[p.optional ? `${p.name}?` : p.name] = toType(p.type);
             }
             const constraints: Constraint[] = [
               param(FT.object(shape as never).toType()),
             ];
-            if (expr.returns) constraints.push(returns(typeFromExpr(expr.returns)));
+            if (expr.returns) constraints.push(returns(toType(expr.returns)));
             if (expr.distribution) constraints.push(distributionConstraintOf(expr.distribution));
             seq.insert({ path: stmt.path, type: createType('fn', constraints) });
             result.tools.push(stmt.path);

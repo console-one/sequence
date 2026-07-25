@@ -288,20 +288,30 @@ describe('vending end state — the target', () => {
     expect(rv.tools).not.toContain('fs.read');
   });
 
-  scenario('V14', 'refinement predicates round-trip: a received definition ENFORCES its refinements at admission', async () => {
+  scenario('V14', 'refinement predicates round-trip: emitted, received, and ENFORCED at the call', async () => {
+    // A refined param mounts with its constraint (the shared walker
+    // mapping — one AST→Type conversion for both engines)…
     const seq = engine({ t: 1_000_000 });
-    const r = vend(seq, { query: 'fs.read' });
-    const rx = new Sequence(() => 1_000_000);
-    await receiveDocument(rx, r.text);
-    // Terminal: the received param type still rejects a bad call shape
-    // exactly as the vendor's would (refinements survive the wire).
-    const bad = rx.insert({ path: 'fs.read.attempt', value: { p: 42 } });
-    expect(bad.suspended || (rx.get('fs.read.attempt') === undefined)).toBe(true);
-    // And a refined param (pattern) mounts as an enforcing constraint:
-    const rr = await receiveDocument(rx, 'mail.get = (addr: string | addr MATCHES /@/) -> { ok: boolean }');
+    const rr = await receiveDocument(seq,
+      'mail.get = (addr: string | addr MATCHES /@/, n: number | n >= 1) -> { ok: boolean }');
     expect(rr.errors).toEqual([]);
-    const cs = JSON.stringify(rx.rawTypeAt('mail.get')?.constraints ?? []);
-    expect(cs).toContain('@');
+    seq.impls.set('mail.get', () => ({ ok: true }));
+    // …the vended line carries the refinement (renderTypeFt round-trip)…
+    const r = vend(seq, { query: 'mail.get', ttlMs: 60_000 });
+    expect(r.text).toContain('/@/');
+    expect(r.text).toContain('>= 1');
+    // …a second kernel receiving the frame holds it…
+    const rx = new Sequence(() => 1_000_000);
+    const rx2 = await receiveDocument(rx, r.text);
+    expect(rx2.errors).toEqual([]);
+    expect(JSON.stringify(rx.rawTypeAt('mail.get')?.constraints ?? [])).toContain('@');
+    // …and the call path ENFORCES it: violating args are refused by
+    // name, before the impl runs.
+    const bad = await callThroughSession(seq, r.sessionId, 'mail.get', { addr: 'no-at', n: 0 });
+    expect(bad.ok).toBe(false);
+    expect((bad as { reason: string }).reason).toContain('invalid-args');
+    const good = await callThroughSession(seq, r.sessionId, 'mail.get', { addr: 'a@b', n: 2 });
+    expect(good.ok).toBe(true);
   });
 
   scenario('V15', 'the AUTOMATIC loop: a call through the session updates the posterior — no manual mounting (beat 9)', async () => {
@@ -325,11 +335,19 @@ describe('vending end state — the target', () => {
       }).toType(),
     } as never).toType();
     seq.insert({ path: 'mail.search', type: createType('fn', [param(deep), returns(FT.object({} as never).toType()), impl('mail.search')]) });
-    const r = vend(seq, { query: 'mail.search', maxTokens: 40 });
+    const r = vend(seq, { query: 'mail.search', maxTokens: 60 });
+    // The full form did not fit; the tool is still OFFERED — as a
+    // receivable stub (looser, never wrong) with a redeemable token.
+    expect(r.tools).toContain('mail.search');
+    expect(r.text).toContain('mail.search = (input: { }) -> { }');
     const typeToken = r.expandTokens.find((t) => t.startsWith('[[type:'));
     expect(typeToken).toBeDefined();
     const out = expand(seq, r.sessionId, typeToken!);
     expect(out.ok).toBe(true);
+    if (out.ok) {
+      expect(out.content).toContain('filter');
+      expect(out.costTokens).toBeGreaterThan(0);
+    }
   });
 
   scenario('V17', 'frame merge: two vended frames compose — same tool → tightest consistent; conflict → named never (beat 11)', async () => {
