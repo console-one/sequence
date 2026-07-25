@@ -1,14 +1,13 @@
 # Examples — runnable claims
 
-Each file here demonstrates one claim of the type system and **asserts
-it** — the script exits non-zero the moment the claim stops being true.
-They are proofs you can run, not printouts.
+Seven demos + a benchmark. Each demo **asserts** the claim it shows and
+exits non-zero the moment the claim breaks — proofs, not printouts.
 
 ```bash
 git clone https://github.com/console-one/sequence.git
 cd sequence
 npm install && npm run build
-node examples/run-all.mjs     # all six, fail-fast
+node examples/run-all.mjs     # all seven, fail-fast
 node examples/bench.mjs       # reproducible numbers on your machine
 ```
 
@@ -24,3 +23,4 @@ The examples import `@console-one/sequence` by name (Node self-reference)
 | `04-identity.mjs` | Function types carry identity (`preserves`): `backwardInfer` derives required inputs from a required output through a chain; `covers` checks claims. |
 | `05-laws.mjs` | Laws are data, enforced by the store at admission — including over their own handoff. |
 | `06-attention.mjs` | Attention, priced: one store rendered under two budgets via cluster → score → rank → budget → hoist, with evictions reported, never silent. |
+| `07-vending.mjs` | The engine: `vend` compiles the tool surface per agent (docs transcluded by rule, budget respected), sessions continue by id and expire structurally, and a second kernel receiving the document gains the tools. |
