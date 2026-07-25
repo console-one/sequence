@@ -211,6 +211,24 @@ export type { SessionToken, AuthValidationResult } from './stdlib';
 export { receiveCalls, receiveCall } from './receive-calls';
 export type { CallOutcome, ReceiveCallsResult } from './receive-calls';
 
+// ─── The ft write side — the definition-set subset ──────────────────────
+// Stage 2 of the v1 deletion ledger: receive the documents a kernel
+// VENDS (fn declarations, sibling-fact binds, offers) — the round-trip
+// law's receiving half. Constraints mount queryably on the types.
+export { receiveDocument } from './receive-doc';
+export type { ReceiveDocResult } from './receive-doc';
+
+// ─── Vending — tool compilation for clients, on THE kernel ──────────────
+// v2 re-base of src/vend.ts (deletion-ledger direction: the v1 module
+// dies when its consumers re-point here). Every load-bearing fact in a
+// vended frame is a receivable statement — never a `--` comment.
+export {
+  vend, continueSession, expand, revend, callThroughSession, electLabel,
+} from './vend';
+export type {
+  VendRequest, VendResult, ContinueResult, ExpandResult, RevendResult,
+} from './vend';
+
 // ─── Shared hoist — ONE hoister serves both engines ─────────────────────
 // hoist (state) + hoistCatalog (the capability frame: nested package
 // blocks + named-type extraction) live in ../src/hoist over the Readable

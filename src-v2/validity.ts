@@ -17,7 +17,7 @@
 
 export interface ConstraintShape {
   op?: string;
-  args?: unknown[];
+  args?: readonly unknown[];
 }
 
 /** The latest instant `c` can still hold w.r.t. $now, or null when the
