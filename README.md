@@ -10,57 +10,84 @@ are one continuum.**
 
 Mount your tools and their documentation as data. The kernel *compiles*
 a surface for each agent — an ft-language document under that agent's
-token budget, with docs transcluded by rule, a session id, and a
-continue endpoint the kernel enforces to expiry:
+token budget, with narrative variants elected by budget, a session id,
+and a continue endpoint the kernel enforces to expiry:
 
 ```js
-import { Sequence, vend, continueSession, FT } from '@console-one/sequence';
+import { Sequence, vend, continueSession, receiveDocument } from '@console-one/sequence/v2';
 
 const kernel = new Sequence();
 
-// documentation is data — variants included
-kernel.mount('bind', '_docs.fsGuide.short', 'FS tools operate on the workspace.');
-kernel.mount('bind', '_docs.fsGuide.long',  '…the full guide…');
+// documentation is data — labeled variants included
+kernel.insert({ path: 'narratives.fsGuide.short', value: 'FS tools operate on the workspace.' });
+kernel.insert({ path: 'narratives.fsGuide.long',  value: '…the full guide…' });
 
-// tools carry doc links in their types — even on deep API fields
-kernel.mount('schema', 'fs.read', FT.fn({
-  input: FT.object({ p: FT.string().annotate('doc', '_docs.pathField').toType() }).toType(),
-  output: FT.object({ content: FT.string().toType() }).toType(),
-  description: 'read a file',
-}).annotate('docPrelude', '_docs.fsGuide').toType());
+// a tool definition is ft text; its description names LABELS, never variants
+await receiveDocument(kernel, 'fs.read = (p: string) -> { content: string }');
+kernel.insert({ path: 'fs.read._description', value: 'read a file. Context: [[narratives.fsGuide]]' });
 
 // one compiled surface per agent, under ITS budget
 const agent = vend(kernel, { query: 'fs', maxTokens: 200, ttlMs: 60_000 });
 ```
 
 `agent.text` is a document the LLM acts on — and it is *valid input* to
-any sequence kernel:
+any sequence kernel. Every load-bearing fact is a receivable statement
+(strip all `--` comments and a fresh kernel reconstructs the same
+tools, expiry and reliability — that is the standing guard):
 
 ```
--- vended by sequence · session slfls0
--- valid while _rt < 1060000 (about 1 minutes)
+-- vended by sequence·v2 · session slfls0 · comments are courtesy; every load-bearing fact below is a statement
 
--- prelude: _docs.fsGuide [short]
--- FS tools operate on the workspace.
+narratives.fsGuide = "…the full guide…"
 
-fs.read = (p: string) -> { content: string }  -- read a file
-tool fs.read
-  -- input.p: [[doc:_docs.pathField : docs for fs.read input.p]]
+fs.read = (p: string) -> { content: string }
+fs.read._description = "read a file. Context: [[narratives.fsGuide]]"
+fs.read._validUntil = 1060000
 
-_sessions.slfls0.continue = (ft: string) -> { ok: boolean }  -- issue ft back to this kernel (install, narrow, call) — refused after expiry
-tool _sessions.slfls0.continue
+_sessions.slfls0.expiresAt = 1060000
+_sessions.slfls0.continue = (ft: string) -> { ok: boolean }
+_sessions.slfls0.expand = (token: string) -> { content: string, costTokens: number }
 ```
+
+(The 200-token budget elected the `long` variant; a tighter budget
+elects `short` — the election is recorded on the session. When a tool
+has *observed* latency/reliability posteriors, its definition line also
+carries `~survival(exp, rate)` and a `._reliability = { alpha, beta }`
+fact — from real calls only, never authored.)
 
 The agent answers by issuing ft back:
 
 ```js
-continueSession(kernel, agent.sessionId, 'tool notify.send'); // installed, live
+await continueSession(kernel, agent.sessionId, 'notify.send = (msg: string) -> { ok: boolean }');
+// → { ok: true, applied: 1, errors: [] } — installed, live
 // after the session's window: { ok: false, reason: 'expired' } — structural, unsupervised
 ```
 
 Vend N times, run N agents — each with its own session, budget, and
 view of the same kernel. No framework, no service: one store, in your
-process. ([Tutorial part 7](doc/part7-the-engine.md) · [`examples/07-vending.mjs`](examples/07-vending.mjs))
+process. To see the whole arc — connectors as data, keys by alias,
+retained verb exclusions, hydration, the learning loop — run the
+12-beat storyboard walk in the
+[substrate repo](https://github.com/console-one/substrate).
+
+## Two engines, one vocabulary
+
+This package ships two engines and one shared vocabulary:
+
+- **`@console-one/sequence/v2` — THE kernel. New work targets this.**
+  One op (`insert`), one algorithm (traverse → admit → compose →
+  propagate), features as rules. `vend`/`continueSession`/
+  `receiveDocument`/`receiveCalls` live here.
+- **`@console-one/sequence`** (the package root) — the original v1
+  engine (`mount`/`receive`), kept while its remaining consumers
+  migrate (a deletion ledger tracks the stages), plus the SHARED
+  vocabulary both engines use: the `FT` builder, the type/compose layer
+  (`compose`, `survival`, `conjugateUpdate`, `planFeasibility`), the
+  hoister, and the ft DSL parser.
+
+The tutorial below teaches the ft *language* and the shared vocabulary
+on the v1 engine — the language layer is the same under both; the
+engine-level write API differs as above.
 
 ## Why this exists
 
