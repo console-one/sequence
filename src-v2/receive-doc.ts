@@ -152,6 +152,15 @@ export async function receiveDocument(seq: Sequence, source: string): Promise<Re
     return result;
   }
 
+  // The document's session id, if it declares one — used below to mark
+  // received tools with their ORIGIN (the chain-provenance seed).
+  const sessionStmt = statements.find(
+    (s): s is Statement & { path: string } =>
+      'path' in s && typeof (s as { path?: unknown }).path === 'string'
+      && (s as { path: string }).path.startsWith('_sessions.'),
+  );
+  const docSession = sessionStmt?.path.split('.')[1];
+
   for (const stmt of statements) {
     try {
       switch (stmt.kind) {
@@ -222,6 +231,19 @@ export async function receiveDocument(seq: Sequence, source: string): Promise<Re
       }
     } catch (e) {
       result.errors.push(`${'path' in stmt ? `${(stmt as { path: string }).path}: ` : ''}${(e as Error).message}`);
+    }
+  }
+
+  // ORIGIN MARKING (beat 12 seed): every tool received from a vended
+  // document carries its grantor's session as chain provenance. A doc
+  // that already stated a longer `._origin.chain` (a re-vend) keeps it —
+  // the vendor extended the chain at emission.
+  if (docSession) {
+    for (const tool of result.tools) {
+      if (tool.startsWith('_')) continue;
+      if (seq.get(`${tool}._origin.chain`) === undefined) {
+        seq.insert({ path: `${tool}._origin.chain`, value: docSession });
+      }
     }
   }
 

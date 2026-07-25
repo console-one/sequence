@@ -224,9 +224,11 @@ export type { ReceiveDocResult } from './receive-doc';
 // vended frame is a receivable statement — never a `--` comment.
 export {
   vend, continueSession, expand, revend, callThroughSession, electLabel,
+  mergeFrames, observeToolCall,
 } from './vend';
 export type {
   VendRequest, VendResult, ContinueResult, ExpandResult, RevendResult,
+  MergeFramesResult,
 } from './vend';
 
 // ─── Shared hoist — ONE hoister serves both engines ─────────────────────

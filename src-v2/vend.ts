@@ -44,10 +44,11 @@
  * is frame-time election by budget — beat 5.
  */
 
-import { type Sequence } from './sequence';
+import { Sequence } from './sequence';
 import {
-  type Type, constraintOf,
+  type Type, constraintOf, isNever,
 } from '../src/type';
+import { compose as composeTypes, conjugateUpdate } from '../src/compose';
 import { renderTypeFt } from '../src/hoist';
 import { timeHorizon } from './validity';
 import { receiveDocument } from './receive-doc';
@@ -73,6 +74,11 @@ export type VendResult = {
   omitted: string[];
   expandTokens: string[];
   expiresAt: number;
+  /** Chain-provenance reports (beat 12): when a RECEIVED grant is
+   *  re-vended, one report per upstream session, addressed to it as ft
+   *  for its continue endpoint. The kernel cannot transport; the host
+   *  delivers these — same contract as continue itself. */
+  chainReports: Array<{ session: string; ft: string }>;
 };
 
 const approxTokens = (s: string): number => Math.ceil(s.length / 4);
@@ -142,6 +148,7 @@ export function vend(seq: Sequence, req: VendRequest = {}): VendResult {
   const sessionId = req.session ?? `s${now.toString(36)}${(vendCounter++).toString(36)}`;
   const budget = req.maxTokens ?? Infinity;
   const expandTokens: string[] = [];
+  const chainSessions = new Set<string>();
 
   // ── selection: fn-typed cells outside `_` scopes ─────────────────
   const candidates: Array<{ path: string; type: Type }> = [];
@@ -150,7 +157,17 @@ export function vend(seq: Sequence, req: VendRequest = {}): VendResult {
       if (key.startsWith('_')) continue;
       const path = prefix ? `${prefix}.${key}` : key;
       const t = seq.rawTypeAt(path);
-      if (t?.kind === 'fn') candidates.push({ path, type: t });
+      // EXPIRY IS ENFORCED AT THE OFFERING (V13): a tool whose type
+      // carries a time bound in the past — a received grant that has
+      // run out — is not offered, with no session machinery involved.
+      if (t?.kind === 'fn') {
+        const horizons = (t.constraints ?? [])
+          .map((c) => timeHorizon(c))
+          .filter((h): h is number => h !== null);
+        if (horizons.length === 0 || Math.min(...horizons) >= now) {
+          candidates.push({ path, type: t });
+        }
+      }
       walkPaths(path);
     }
   };
@@ -230,6 +247,14 @@ export function vend(seq: Sequence, req: VendRequest = {}): VendResult {
     if (rel && typeof rel.alpha === 'number' && typeof rel.beta === 'number') {
       block.push(`${path}._reliability = { alpha: ${rel.alpha}, beta: ${rel.beta} }`);
     }
+    // The latency SUFFICIENT STATISTICS ride alongside the ~survival
+    // display form: a merge or planner needs the evidence (gamma shape/
+    // rate), not just the point rate.
+    const latPrior = seq.get(`${path}._prior.latency`) as
+      { gamma?: { shape?: number; rate?: number } } | undefined;
+    if (typeof latPrior?.gamma?.shape === 'number' && typeof latPrior?.gamma?.rate === 'number') {
+      block.push(`${path}._latency = { shape: ${latPrior.gamma.shape}, rate: ${latPrior.gamma.rate} }`);
+    }
     // TEMPORAL MEET: a tool whose type already carries a time bound (a
     // received grant being re-vended) can never be granted PAST that
     // bound — validity only tightens through the chain (beat 12).
@@ -237,6 +262,15 @@ export function vend(seq: Sequence, req: VendRequest = {}): VendResult {
       .map((c) => timeHorizon(c))
       .filter((h): h is number => h !== null);
     block.push(`${path}._validUntil = ${Math.min(expiresAt, ...horizons)}`);
+    // CHAIN PROVENANCE (beat 12): a received grant being re-vended
+    // extends its origin chain and owes each upstream session a report.
+    const parentChain = seq.get(`${path}._origin.chain`);
+    if (typeof parentChain === 'string' && parentChain.length > 0) {
+      block.push(`${path}._origin.chain = "${parentChain} ${sessionId}"`);
+      for (const upstream of parentChain.split(' ')) {
+        chainSessions.add(upstream);
+      }
+    }
     const blockText = block.join('\n');
 
     // Budget check BEFORE emitting: overflow is spoken, never a silent
@@ -287,7 +321,12 @@ export function vend(seq: Sequence, req: VendRequest = {}): VendResult {
     return expand(seq, sessionId, token);
   });
 
-  return { sessionId, text: lines.join('\n'), tools: vended, omitted, expandTokens, expiresAt };
+  const chainReports = [...chainSessions].map((session) => ({
+    session,
+    ft: `_sessions.${session}.chain.${sessionId} = { tools: "${vended.join(' ')}", expiresAt: ${expiresAt} }`,
+  }));
+
+  return { sessionId, text: lines.join('\n'), tools: vended, omitted, expandTokens, expiresAt, chainReports };
 }
 
 let vendCounter = 0;
@@ -350,7 +389,7 @@ export function expand(seq: Sequence, sessionId: string, token: string): ExpandR
 }
 
 export type RevendResult =
-  | ({ ok: true } & Pick<VendResult, 'text' | 'tools' | 'omitted' | 'expandTokens' | 'expiresAt'>)
+  | ({ ok: true } & Pick<VendResult, 'text' | 'tools' | 'omitted' | 'expandTokens' | 'expiresAt' | 'chainReports'>)
   | { ok: false; reason: 'unknown-session' | 'expired' };
 
 /** Re-compile WITHIN a session: new query/budget, same session id, same
@@ -368,13 +407,211 @@ export function revend(
   return {
     ok: true,
     text: r.text, tools: r.tools, omitted: r.omitted,
-    expandTokens: r.expandTokens, expiresAt,
+    expandTokens: r.expandTokens, expiresAt, chainReports: r.chainReports,
   };
 }
 
+// ─── frame merge (beat 11): compose over two vended documents ─────────
+
+export type MergeFramesResult = {
+  /** The merged frame — same receivable grammar as a vended frame,
+   *  minus sessions (a merged frame is a VIEW; its sessions remain the
+   *  originals'). */
+  text: string;
+  tools: string[];
+  /** Named conflicts — a genuine contradiction is never silently
+   *  overwritten; it is excluded from the surface and NAMED here. */
+  conflicts: string[];
+};
+
+type FrameFacts = {
+  type: Type;
+  description?: string;
+  reliability?: { alpha: number; beta: number };
+  latency?: { shape: number; rate: number };
+  validUntil?: number;
+};
+
+/**
+ * Merge N vended frames into one surface. The rules, in lattice terms:
+ *
+ *   · same tool from two sources → shared compose(): tightest
+ *     consistent type; a contradictory pair is a NAMED conflict, never
+ *     a silent overwrite (the kernel's own insert would absorb — this
+ *     is why the merge composes explicitly).
+ *   · validity → temporal meet: min across stated `_validUntil` facts
+ *     and every time bound already on the composed type.
+ *   · observed posteriors (reliability beta, latency gamma) → the
+ *     MORE-EVIDENCED posterior supersedes (max total evidence). Two
+ *     frames from one office share observation history, so summing
+ *     would double-count; true compounding of INDEPENDENT observers
+ *     needs observer identity (chain provenance) and is beat-12 work.
+ *   · descriptions and prelude binds must agree; a difference is a
+ *     named conflict.
+ *
+ * A planner prices the merged surface from the types and facts alone —
+ * same standing guard as vend: nothing load-bearing in comments.
+ */
+export async function mergeFrames(docs: string[]): Promise<MergeFramesResult> {
+  const conflicts: string[] = [];
+  const tools = new Map<string, FrameFacts>();
+  const preludes = new Map<string, string>();
+
+  for (const doc of docs) {
+    // Each doc parses into its own scratch kernel so cross-doc
+    // composition stays explicit (see rule 1).
+    const rx = new Sequence(() => 0);
+    const rr = await receiveDocument(rx, doc);
+    if (rr.errors.length > 0) {
+      conflicts.push(...rr.errors.map((e) => `unreceivable: ${e}`));
+      continue;
+    }
+    // Prelude binds: top-level non-underscore string values that are
+    // not tool siblings.
+    const walkValues = (prefix: string): void => {
+      for (const key of rx.keys(prefix || undefined)) {
+        if (key.startsWith('_')) continue;
+        const path = prefix ? `${prefix}.${key}` : key;
+        if (rx.rawTypeAt(path)?.kind === 'fn') continue;
+        const v = rx.get(path);
+        if (typeof v === 'string' && !path.includes('._')) {
+          const prev = preludes.get(path);
+          if (prev !== undefined && prev !== v) {
+            conflicts.push(`${path}: prelude texts differ between frames`);
+          } else {
+            preludes.set(path, v);
+          }
+        }
+        walkValues(path);
+      }
+    };
+    walkValues('');
+
+    for (const path of rr.tools.filter((t) => !t.startsWith('_'))) {
+      const type = rx.rawTypeAt(path);
+      if (type?.kind !== 'fn') continue;
+      const facts: FrameFacts = {
+        type,
+        description: rx.get(`${path}._description`) as string | undefined,
+        reliability: rx.get(`${path}._reliability`) as FrameFacts['reliability'],
+        latency: rx.get(`${path}._latency`) as FrameFacts['latency'],
+        validUntil: rx.get(`${path}._validUntil`) as number | undefined,
+      };
+      const prior = tools.get(path);
+      if (!prior) {
+        tools.set(path, facts);
+        continue;
+      }
+      // Rule 1: explicit compose, conflicts named.
+      const composed = composeTypes(prior.type, facts.type);
+      if (isNever(composed)) {
+        conflicts.push(`${path}: contradictory definitions → never`);
+        tools.delete(path);
+        continue;
+      }
+      prior.type = composed;
+      // Rule 2: temporal meet on the stated facts.
+      if (facts.validUntil !== undefined) {
+        prior.validUntil = prior.validUntil === undefined
+          ? facts.validUntil
+          : Math.min(prior.validUntil, facts.validUntil);
+      }
+      // Rule 3: more-evidenced posterior supersedes.
+      if (facts.reliability) {
+        const ev = (r?: { alpha: number; beta: number }): number => (r ? r.alpha + r.beta : -1);
+        if (ev(facts.reliability) > ev(prior.reliability)) prior.reliability = facts.reliability;
+      }
+      if (facts.latency) {
+        const ev = (l?: { shape: number }): number => l?.shape ?? -1;
+        if (ev(facts.latency) > ev(prior.latency)) prior.latency = facts.latency;
+      }
+      // Rule 4: descriptions agree or conflict.
+      if (facts.description !== undefined && prior.description !== undefined
+          && facts.description !== prior.description) {
+        conflicts.push(`${path}._description: texts differ between frames`);
+      } else if (facts.description !== undefined) {
+        prior.description = facts.description;
+      }
+    }
+  }
+
+  // ── emission: the same receivable grammar as vend ─────────────────
+  const lines: string[] = [];
+  lines.push(`-- merged frame · ${docs.length} sources · comments are courtesy; every load-bearing fact below is a statement`);
+  lines.push('');
+  for (const [path, text] of [...preludes.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+    lines.push(`${path} = ${quote(text)}`);
+  }
+  if (preludes.size > 0) lines.push('');
+
+  const emittedTools: string[] = [];
+  for (const [path, f] of [...tools.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+    const paramT = constraintOf(f.type, 'param')?.args[0] as Type | undefined;
+    const returnsT = constraintOf(f.type, 'returns')?.args[0] as Type | undefined;
+    const params = paramT
+      ? renderTypeFt(paramT).replace(/\s+/g, ' ').replace(/^\{\s*/, '(').replace(/\s*\}$/, ')')
+      : '()';
+    const returns = returnsT ? renderTypeFt(returnsT).replace(/\s+/g, ' ') : '{ ok: true }';
+    const suffix = f.latency
+      ? ` ~survival(exp, ${Number((f.latency.shape / f.latency.rate).toPrecision(3))})`
+      : '';
+    lines.push(`${path} = ${params} -> ${returns}${suffix}`);
+    if (f.description !== undefined) lines.push(`${path}._description = ${quote(f.description)}`);
+    if (f.reliability) {
+      lines.push(`${path}._reliability = { alpha: ${f.reliability.alpha}, beta: ${f.reliability.beta} }`);
+    }
+    if (f.latency) {
+      lines.push(`${path}._latency = { shape: ${f.latency.shape}, rate: ${f.latency.rate} }`);
+    }
+    // Temporal meet folds the stated facts AND the composed type's own
+    // time bounds (same law as vend's re-vend clamp).
+    const horizons = (f.type.constraints ?? [])
+      .map((c) => timeHorizon(c))
+      .filter((h): h is number => h !== null);
+    const bounds = [...horizons, ...(f.validUntil !== undefined ? [f.validUntil] : [])];
+    if (bounds.length > 0) lines.push(`${path}._validUntil = ${Math.min(...bounds)}`);
+    lines.push('');
+    emittedTools.push(path);
+  }
+  for (const c of conflicts) lines.push(`-- conflict: ${c}`);
+
+  return { text: lines.join('\n'), tools: emittedTools, conflicts };
+}
+
+/** THE LEARNING LOOP'S KERNEL HALF (V15/beat 9): observe one tool
+ *  call — real measured duration → gamma-exponential conjugate update;
+ *  success/failure → beta update — at the `_prior.*` convention the
+ *  next vend reads. Exported so hosts instrumenting their own impls
+ *  use the same arithmetic; an impl that self-observes marks itself
+ *  with `observes = true` and the session path stands down (one real
+ *  observation must never count twice). */
+export function observeToolCall(seq: Sequence, path: string, dtMs: number, ok: boolean): void {
+  const relPath = `${path}._prior.reliability`;
+  const rel = (seq.get(relPath) as { alpha?: number; beta?: number } | undefined) ?? { alpha: 1, beta: 1 };
+  seq.insert({ path: relPath, value: conjugateUpdate('beta', rel, ok ? 'success' : 'failure') });
+
+  const latPath = `${path}._prior.latency`;
+  const prev = seq.get(latPath) as
+    { gamma?: { shape?: number; rate?: number }; samples?: number } | undefined;
+  // Declared conjugate prior: gamma(shape=1, rate=1ms) — one pseudo-
+  // observation of 1ms; posterior mean = shape/rate per ms.
+  const g = conjugateUpdate('gamma', prev?.gamma ?? { shape: 1, rate: 1 }, Math.max(dtMs, 1e-6));
+  const rate = (g.shape ?? 1) / (g.rate ?? 1);
+  seq.insert({
+    path: latPath,
+    value: {
+      family: 'exponential',
+      rate: Number(rate.toPrecision(3)),
+      gamma: g,
+      samples: (prev?.samples ?? 0) + 1,
+    },
+  });
+}
+
 /** Programmatic single-call convenience against a session frame: expiry
- *  + stale-frame checked, then the shared receiveCall path (admission /
- *  rules / posterior updates apply to the output like any fact). */
+ *  + stale-frame checked, then the shared receiveCall path — and the
+ *  call is OBSERVED (posterior update, V15) unless the impl declares it
+ *  self-observes. */
 export async function callThroughSession(
   seq: Sequence,
   sessionId: string,
@@ -390,6 +627,16 @@ export async function callThroughSession(
     return { ok: false, reason: 'not-in-frame' };
   }
   if (seq.rawTypeAt(fn)?.kind !== 'fn') return { ok: false, reason: 'stale-frame' };
-  const out = await receiveCall(seq, fn, args, bindPath);
-  return { ok: true, value: out.value };
+  const selfObserving = (seq.impls.get(fn) as { observes?: boolean } | undefined)?.observes === true;
+  const t0 = performance.now();
+  let ok = false;
+  try {
+    const out = await receiveCall(seq, fn, args, bindPath);
+    ok = true;
+    return { ok: true, value: out.value };
+  } catch (e) {
+    return { ok: false, reason: `call-failed: ${(e as Error).message}` };
+  } finally {
+    if (!selfObserving) observeToolCall(seq, fn, performance.now() - t0, ok);
+  }
 }

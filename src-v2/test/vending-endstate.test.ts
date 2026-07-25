@@ -19,7 +19,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { Sequence } from '../sequence';
-import { vend, continueSession, expand, revend, callThroughSession } from '../vend';
+import { vend, continueSession, expand, revend, callThroughSession, mergeFrames } from '../vend';
 import { receiveDocument } from '../receive-doc';
 import { timeHorizon } from '../validity';
 import { FT } from '../../src/builder';
@@ -337,14 +337,18 @@ describe('vending end state — the target', () => {
     const b = engine({ t: 1_000_000 });
     const ra = vend(a, { query: 'fs.read', ttlMs: 60_000 });
     const rb = vend(b, { query: 'fs.read', ttlMs: 30_000 });
-    const api = (await import('../vend')) as unknown as {
-      mergeFrames?: (docs: string[]) => { text: string; conflicts: string[] };
-    };
-    expect(typeof api.mergeFrames).toBe('function');
-    const merged = api.mergeFrames!([ra.text, rb.text]);
+    const merged = await mergeFrames([ra.text, rb.text]);
     // Tightest consistent: the shorter validity wins in the merged frame.
+    expect(merged.tools).toContain('fs.read');
     expect(merged.text).toContain(`fs.read._validUntil = ${rb.expiresAt}`);
     expect(merged.conflicts).toEqual([]);
+    // A genuine contradiction is NAMED, never silently overwritten.
+    const clash = await mergeFrames([
+      'x.go = (p: string) -> { ok: boolean }',
+      'x.go = (p: number) -> { ok: boolean }',
+    ]);
+    expect(clash.tools).not.toContain('x.go');
+    expect(clash.conflicts.some((c) => c.startsWith('x.go'))).toBe(true);
   });
 
   scenario('V19', 'chain-grained provenance: the origin office sees the full re-vend chain (beat 12)', async () => {
@@ -352,12 +356,24 @@ describe('vending end state — the target', () => {
     const ra = vend(a, { query: 'fs.read', ttlMs: 600_000 });
     const b = new Sequence(() => 1_000_000);
     await receiveDocument(b, ra.text);
+    // B re-vends A's grant; the vend owes A a chain report, and the
+    // HOST delivers it — the kernel cannot transport, same contract as
+    // continue itself.
     const rb = vend(b, { query: 'fs.read', ttlMs: 60_000 });
+    expect(rb.chainReports.length).toBeGreaterThan(0);
+    expect(rb.chainReports[0].session).toBe(ra.sessionId);
+    for (const report of rb.chainReports) {
+      expect((await continueSession(a, report.session, report.ft)).ok).toBe(true);
+    }
+    // A sees the re-vend at the capability grain, chain-keyed.
+    const links = a.keys(`_sessions.${ra.sessionId}.chain`);
+    expect(links).toContain(rb.sessionId);
+    const link = a.get(`_sessions.${ra.sessionId}.chain.${rb.sessionId}`) as
+      { tools?: string; expiresAt?: number };
+    expect(link.tools).toContain('fs.read');
+    // And C, receiving from B, holds the FULL chain as provenance.
     const c = new Sequence(() => 1_000_000);
     await receiveDocument(c, rb.text);
-    // Terminal: A can see that its grant was re-vended (B → C) at the
-    // capability grain — the chain is queryable where it originated.
-    const chain = a.get(`_sessions.${ra.sessionId}.chain`);
-    expect(chain).toBeDefined();
+    expect(c.get('fs.read._origin.chain')).toBe(`${ra.sessionId} ${rb.sessionId}`);
   });
 });
