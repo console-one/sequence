@@ -16,7 +16,14 @@ on the same log — so validation, progress, scheduling, access control
 and rendering stop being separate subsystems. There is a text form, the
 **ft language**, that round-trips with the store.
 
-**Start with [the tutorial](doc/index.md)** — five short parts, one
+**The standalone use case:** sequence is a local engine for managing
+many LLM agents — mount tools and their docs as data, `vend(kernel,
+{query, maxTokens, ttlMs})` each agent its own compiled ft surface with
+a session id and a kernel-enforced expiry, and agents answer by issuing
+ft back through `continueSession`. See [part 7 of the tutorial](doc/part7-the-engine.md)
+and `examples/07-vending.mjs`.
+
+**Start with [the tutorial](doc/index.md)** — seven short parts, one
 running example each, and every ft block in it is executed by this
 repository's test suite, so the pages cannot drift from the kernel.
 
@@ -48,7 +55,7 @@ actionable — none of which was written as application code.
 
 ## Runnable examples
 
-`examples/` holds six self-asserting demos — one per core claim (continuum,
+`examples/` holds seven self-asserting demos — one per core claim (continuum,
 learned cost curves, temporal feasibility, backward inference, admission
 laws, budgeted rendering) — plus a reproducible micro-benchmark:
 

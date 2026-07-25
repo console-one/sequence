@@ -21,5 +21,5 @@ const built = existsSync(join(root, 'dist', 'src', 'index.js'));
   if (r.status !== 0) {
     throw new Error(`examples failed:\n${r.stdout}\n${r.stderr}`);
   }
-  expect(r.stdout).toContain('6/6 examples passed');
+  expect(r.stdout).toMatch(/(\d+)\/\1 examples passed/);
 }, 130_000);

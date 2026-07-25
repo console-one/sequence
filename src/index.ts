@@ -50,6 +50,12 @@ export type { EnvOpts } from './env';
 export { renderForReader } from './runtime/render';
 export type { ReaderConfig, RenderResult, ScoredCluster, Cluster } from './runtime/render';
 
+// Vending — tool compilation for clients: render the mounted tool
+// surface as an ft document under constraints, with doc transclusion
+// and a session contract (specs/docs/TOOL_COMPILATION_VENDING.md).
+export { vend, continueSession } from './vend';
+export type { VendRequest, VendResult, ContinueResult } from './vend';
+
 // Rotation — lock-holder moves a range to a destination with a
 // transparent redirect. The compression/federation/retention
 // primitive, applied recursively at any tier.

@@ -466,7 +466,7 @@ function escapeString(s: string): string {
 // RENDER TYPES AS FT SYNTAX
 // ═══════════════════════════════════════════════════════════════════════
 
-function renderTypeFt(type: Type): string {
+export function renderTypeFt(type: Type): string {
   switch (type.kind) {
     case 'string': {
       let s = 'string';

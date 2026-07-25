@@ -58,6 +58,11 @@ so and links the issue rather than writing around it.
    reliability curves on claims, and the quantifier layer (∀/∈ as
    `index … over … where`). Includes the honest designed-vs-implemented
    ledger.
+7. **[The engine](part7-the-engine.md)** — the standalone payoff: boot a
+   kernel, mount tools + docs as data, and `vend` each LLM agent its own
+   budgeted ft document with transcluded documentation, a session id,
+   and a continue endpoint the kernel enforces to expiry. One kernel,
+   many agents; vended surfaces propagate between kernels as text.
 
 ## Where this is used
 
