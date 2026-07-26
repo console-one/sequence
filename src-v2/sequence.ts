@@ -153,6 +153,10 @@ export type InsertInput = {
   where?: Constraint[];
   author?: string;
   identity?: string;
+  /** 'invalidate' clears the cell (retraction delta). Default 'narrow'.
+   *  The public half of what emitter templates could already do —
+   *  SnapshotEntry declared this op before the kernel accepted it. */
+  op?: 'narrow' | 'invalidate';
 };
 
 export type InsertResult = { block: Block; changes: Delta[]; suspended: boolean };
@@ -196,7 +200,7 @@ export class Sequence {
     const block: Block = {
       seq: this.nextSeq++,
       coord: { path: input.path, identity: input.identity },
-      op: 'narrow',
+      op: input.op ?? 'narrow',
       value: input.value,
       type: input.type,
       rules: input.rules,
