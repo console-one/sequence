@@ -46,6 +46,7 @@
 
 import { Sequence } from './sequence';
 import { type Type, constraintOf } from '../src/type';
+import { conjugateUpdate } from '../src/compose';
 import { renderTypeFt } from '../src/hoist';
 import { timeHorizon } from './validity';
 import { receiveDocument } from './receive-doc';
@@ -215,9 +216,25 @@ function proximity(timeBound: number | null, now: number, horizon: number | unde
   return Math.max(0, 1 - (timeBound - now) / horizon);
 }
 
+/** LEARNED relevance (stage 2): the conjugate posterior over what this
+ *  client DID with cells admitted into its prior frames — expanded or
+ *  called → success; admitted but ignored → failure (folded by
+ *  foldSessionRelevance at the client's next election). Beta(1,1)
+ *  prior → 0.5: no evidence is neutral, and an anonymous election
+ *  scales every value identically. */
+function relevanceMean(seq: Sequence, client: string | undefined, path: string): number {
+  if (!client) return 0.5;
+  const r = seq.getCell(`_relevance.${client}.${path}`)?.value as
+    { alpha?: number; beta?: number } | undefined;
+  const a = typeof r?.alpha === 'number' ? r.alpha : 1;
+  const b = typeof r?.beta === 'number' ? r.beta : 1;
+  return a / (a + b);
+}
+
 /** value(cell): ONE expression over the walk's collected context,
- *  weighted by the concern's declared posture. Inputs are read off the
- *  cell and its meaning — never a switch on kind. */
+ *  weighted by the concern's declared posture and scaled by the
+ *  client's learned relevance. Inputs are read off the cell and its
+ *  meaning — never a switch on kind. */
 function valueOfCell(
   seq: Sequence,
   spec: ConcernSpec,
@@ -226,10 +243,45 @@ function valueOfCell(
   now: number,
 ): number {
   const w = spec.value;
-  return w.base
+  return relevanceMean(seq, client, item.path) * (
+    w.base
     + w.access * item.posterior
     + w.preference * preferenceWeight(seq, client, item.path)
-    + w.temporal * proximity(item.timeBound, now, spec.horizon);
+    + w.temporal * proximity(item.timeBound, now, spec.horizon)
+  );
+}
+
+/**
+ * THE RELEVANCE LOOP'S FOLD (stage 2; beat 9 at the attention grain).
+ * The session is already the instrument: each frame records what was
+ * admitted (`.admitted`) and the owed endpoints record what the client
+ * touched (`.engaged.*` — written by expand/callThroughSession). At
+ * the client's NEXT election, every not-yet-folded session of theirs
+ * becomes evidence: engaged → success, ignored → failure, one beta
+ * update per admitted cell at `_relevance.<client>.<path>`.
+ * `.relevanceFolded` marks the session spent — one real observation
+ * must never count twice.
+ */
+function foldSessionRelevance(seq: Sequence, client: string): void {
+  for (const sid of seq.keys('_sessions')) {
+    const base = `_sessions.${sid}`;
+    if (seq.getCell(`${base}.client`)?.value !== client) continue;
+    if (seq.getCell(`${base}.relevanceFolded`)?.value === true) continue;
+    const admitted = seq.getCell(`${base}.admitted`)?.value;
+    if (typeof admitted === 'string' && admitted !== '') {
+      for (const path of admitted.split(' ')) {
+        const engaged = seq.getCell(`${base}.engaged.${path}`)?.value === true;
+        const relPath = `_relevance.${client}.${path}`;
+        const prior = (seq.getCell(relPath)?.value as
+          { alpha?: number; beta?: number } | undefined) ?? { alpha: 1, beta: 1 };
+        seq.insert({
+          path: relPath,
+          value: conjugateUpdate('beta', prior, engaged ? 'success' : 'failure'),
+        });
+      }
+    }
+    seq.insert({ path: `${base}.relevanceFolded`, value: true });
+  }
 }
 
 /** cost(cell): tokens of its receivable rendering, one item slot, and
@@ -310,6 +362,10 @@ export function electFrame(seq: Sequence, req: FrameRequest): FrameResult {
   const capacities = req.capacities ?? {};
   const expandTokens: string[] = [];
   const chainSessions = new Set<string>();
+
+  // ── the relevance loop closes FIRST: the client's prior sessions
+  //    become evidence before this election prices anything ──────────
+  if (req.client !== undefined) foldSessionRelevance(seq, req.client);
 
   // ── case: the declared walk poses the question ────────────────────
   const spec = readConcern(seq, req.concern);
@@ -542,6 +598,10 @@ export function expand(seq: Sequence, sessionId: string, token: string): ExpandR
   if (seq.now() > expiresAt) return { ok: false, reason: 'expired' };
   const m = /^\[\[(doc|type):([^\s:]+) : /.exec(token);
   if (!m) return { ok: false, reason: 'unknown-token', token };
+  // Engagement is observed where it happens (stage 2): redeeming a
+  // token IS attention spent on that cell — the session records it for
+  // the relevance fold at the client's next election.
+  seq.insert({ path: `_sessions.${sessionId}.engaged.${m[2]}`, value: true });
   if (m[1] === 'type') {
     const type = seq.rawTypeAt(m[2]);
     if (type?.kind !== 'fn') return { ok: false, reason: 'unknown-token', token };

@@ -524,4 +524,39 @@ describe('the elected frame — one election over declared concerns', () => {
     for (const p of s1) expect(s2.has(p)).toBe(true);
     for (const p of s2) expect(s3.has(p)).toBe(true);
   });
+
+  scenario('E6', 'the relevance loop: what a client ignores SHRINKS in its next frame (beat 9 at the attention grain)', async () => {
+    const clock = { t: 1_000_000 };
+    const seq = engine(clock);
+    declareConcern(seq, 'work', {
+      typeKind: 'fn',
+      value: { base: 1, access: 0, preference: 0, temporal: 0 },
+    });
+    // Frame 1: room for everything — both tools admitted.
+    const f1 = electFrame(seq, { concern: 'work', client: 'casey', ttlMs: 600_000 });
+    expect(f1.admitted).toEqual(['fs.read', 'fs.write']);
+    // The client engages ONE admitted cell, through the session — the
+    // session is the instrument; nothing else records anything.
+    const call = await callThroughSession(seq, f1.sessionId, 'fs.read', { p: '/x' });
+    expect(call.ok).toBe(true);
+    // The NEXT election folds the evidence: engaged → success, ignored
+    // → failure — observed conjugate posteriors, per client, on facts.
+    const f2 = electFrame(seq, { concern: 'work', client: 'casey', capacities: { items: 1 } });
+    expect(f2.admitted).toEqual(['fs.read']);
+    expect(f2.omitted).toContain('fs.write');
+    const relRead = seq.get('_relevance.casey.fs.read') as { alpha: number; beta: number };
+    const relWrite = seq.get('_relevance.casey.fs.write') as { alpha: number; beta: number };
+    expect(relRead.alpha).toBe(2);   // one engagement observed
+    expect(relRead.beta).toBe(1);
+    expect(relWrite.alpha).toBe(1);
+    expect(relWrite.beta).toBe(2);   // one ignore observed
+    // One real observation never counts twice — f1 is spent; only f2's
+    // session folds at the third election. And OMISSION IS NOT AN
+    // IGNORE: fs.write was never admitted in f2, so it gains no
+    // evidence; fs.read (admitted in f2, untouched) records the ignore.
+    const f3 = electFrame(seq, { concern: 'work', client: 'casey', capacities: { items: 1 } });
+    expect(f3.admitted).toEqual(['fs.read']);
+    expect(seq.get('_relevance.casey.fs.read')).toMatchObject({ alpha: 2, beta: 2 });
+    expect(seq.get('_relevance.casey.fs.write')).toMatchObject({ alpha: 1, beta: 2 });
+  });
 });

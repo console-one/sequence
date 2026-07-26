@@ -351,6 +351,10 @@ export async function callThroughSession(
   }
   const fnType = seq.rawTypeAt(fn);
   if (fnType?.kind !== 'fn') return { ok: false, reason: 'stale-frame' };
+  // Engagement is observed where it happens (stage 2): calling a tool
+  // through the session IS attention spent on that cell — recorded for
+  // the relevance fold at the client's next election.
+  seq.insert({ path: `_sessions.${sessionId}.engaged.${fn}`, value: true });
   // Refinements ENFORCE at the call (V14): args are validated against
   // the param type — pattern/min/max/literal-union — with the shared
   // check(), before the impl runs and before any observation (a
