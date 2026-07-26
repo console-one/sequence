@@ -178,7 +178,11 @@ function renderFactLines(path: string, value: unknown, timeBound: number | null,
   return lines.join('\n');
 }
 
-function renderFactValue(v: unknown): string {
+/** THE fact-value grammar: render a JS value as a receivable ft
+ *  literal (strings quoted one-line, objects/arrays in ft form —
+ *  never JSON with quoted keys). Exported as the shared renderer for
+ *  any host emitting fact binds (transport delta lines, journals). */
+export function renderFactValue(v: unknown): string {
   if (typeof v === 'string') return quote(v);
   if (typeof v === 'number' || typeof v === 'boolean') return String(v);
   if (Array.isArray(v)) return `[${v.map(renderFactValue).join(', ')}]`;

@@ -205,6 +205,17 @@ export {
 } from './stdlib';
 export type { SessionToken, AuthValidationResult } from './stdlib';
 
+// ─── Stdlib — session machinery (ported from v1 session-rules) ──────────
+// Writer-authority admission + lifecycle classes (active/idle/expired on
+// _rt advance) + holder release on disconnect — the transport host's
+// session semantics as rules-as-data, no tick scheduler.
+export {
+  installWriterAuthority,
+  installSessionLifecycle,
+  installHolderRelease,
+  installNodeStorage,
+} from './stdlib';
+
 // ─── The ft write side — call execution against seq.impls ───────────────
 // Stage 1 of the v1 deletion ledger: parse ft text (shared dsl parser)
 // and execute the call subset asynchronously against the impls registry.
@@ -227,7 +238,7 @@ export type { ReceiveDocResult } from './receive-doc';
 // the tools-weighted degenerate case.
 export { declareConcern, readConcern, caseWalk, cellTimeBound } from './case';
 export type { ConcernSpec, ConcernValueWeights, CaseInput, CaseYield } from './case';
-export { electFrame } from './elect-frame';
+export { electFrame, renderFactValue } from './elect-frame';
 export type { FrameRequest, FrameResult } from './elect-frame';
 
 // ─── Vending — tool compilation for clients, on THE kernel ──────────────

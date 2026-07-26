@@ -113,8 +113,18 @@ function siblingConstraint(path: string, value: unknown): { tool: string; c: Con
  * constraint grammar), `tool` offer assertions, and literal-arg calls
  * (via the shared receiveCall). Errors are collected per statement;
  * one bad line never masks the rest.
+ *
+ * `opts.author` threads the SENDER'S IDENTITY onto every insert this
+ * document performs — the transport half of writer authority. A host
+ * receiving ft over a wire stamps the connection's identity here so
+ * admission rules (installWriterAuthority) judge the actual author,
+ * never an anonymous write.
  */
-export async function receiveDocument(seq: Sequence, source: string): Promise<ReceiveDocResult> {
+export async function receiveDocument(
+  seq: Sequence,
+  source: string,
+  opts: { author?: string } = {},
+): Promise<ReceiveDocResult> {
   const result: ReceiveDocResult = { applied: 0, tools: [], errors: [] };
 
   let statements: Statement[];
@@ -172,7 +182,7 @@ export async function receiveDocument(seq: Sequence, source: string): Promise<Re
             ];
             if (expr.returns) constraints.push(returns(toType(expr.returns)));
             if (expr.distribution) constraints.push(distributionConstraintOf(expr.distribution));
-            seq.insert({ path: stmt.path, type: createType('fn', constraints) });
+            seq.insert({ path: stmt.path, type: createType('fn', constraints), author: opts.author });
             result.tools.push(stmt.path);
             result.applied++;
             continue;
@@ -188,11 +198,11 @@ export async function receiveDocument(seq: Sequence, source: string): Promise<Re
 
           // concrete fact bind.
           const value = valueFromExpr(expr);
-          seq.insert({ path: stmt.path, value });
+          seq.insert({ path: stmt.path, value, author: opts.author });
           result.applied++;
           const sib = siblingConstraint(stmt.path, value);
           if (sib && seq.rawTypeAt(sib.tool)?.kind === 'fn') {
-            seq.insert({ path: sib.tool, type: createType('fn', [sib.c]) });
+            seq.insert({ path: sib.tool, type: createType('fn', [sib.c]), author: opts.author });
           }
           continue;
         }
@@ -215,7 +225,7 @@ export async function receiveDocument(seq: Sequence, source: string): Promise<Re
     for (const tool of result.tools) {
       if (tool.startsWith('_')) continue;
       if (seq.get(`${tool}._origin.chain`) === undefined) {
-        seq.insert({ path: `${tool}._origin.chain`, value: docSession });
+        seq.insert({ path: `${tool}._origin.chain`, value: docSession, author: opts.author });
       }
     }
   }
