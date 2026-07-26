@@ -1,47 +1,31 @@
 /**
- * vend.ts (v2) — tool compilation for clients, on THE kernel.
+ * vend.ts (v2) — tool compilation for clients, as the TOOLS-WEIGHTED
+ * DEGENERATE CASE of the one frame call.
  *
- * The v1 module (src/vend.ts, 2026-07-24) composed the same rules over
- * the v1 engine; this is its v2 re-base — deletion-ledger direction:
- * v1 vend dies once its consumers re-point here. What changed is not
- * the rules but the HONESTY OF THE CARRIER:
+ * THE ELECTED FRAME, stage 1: vend's bespoke selection walk and its
+ * greedy doc-election are DELETED. What remains here is the vending
+ * REQUEST SHAPE (query/maxTools/maxTokens/ttl) mapped onto
+ * `electFrame` (elect-frame.ts) over the declared `tools` concern:
  *
- *   v1 emitted validity, preludes and docs as `--` comment lines. The
- *   standing guard for "interpretable equivalently by non-LLM systems"
- *   is: strip every `--` line from a vended frame and every merge /
- *   planner / expiry / constraint assertion must still pass. v1 fails
- *   that by design-shortcut. Here, EVERY LOAD-BEARING FACT IS A
- *   RECEIVABLE STATEMENT:
+ *   · case:      `_concerns.tools.*` — structural walk from the root,
+ *                fn-typed cells, `_` scopes excluded (declared once,
+ *                lazily; the walk engine is case.ts, shared).
+ *   · election:  uniform value (base 1, all context weights 0 — the
+ *                "tools-weighted" posture), `items` capacity when
+ *                maxTools is set → `selectUnderPrices` admits the
+ *                path-ordered head, exactly the old slice, with the
+ *                dual price of a tool slot now spoken in the frame.
+ *   · commitment: the document assembly, session record, endpoints,
+ *                chain reports — vend's own machinery, MOVED to
+ *                elect-frame.ts (reused, not forked).
  *
- *   · validity     → `<tool>._validUntil = T` (receive-doc mounts
- *                    lte($now, T) on the tool type — the exact family
- *                    validity.ts timeHorizon() reads)
- *   · reliability  → `<tool>._reliability = { alpha, beta }` (observed
- *                    beta posterior → distribution constraint)
- *   · latency      → `~survival(exp, rate)` / `~lognormal(...)` suffix
- *                    on the definition line (parses today; mounts as a
- *                    distribution constraint on receive)
- *   · descriptions → `<tool>._description = "..."` binds (the v2
- *                    installTool convention), label references kept AS
- *                    LABELS (`[[narratives.team]]`) — authoring names
- *                    the label, never the variant
- *   · preludes     → elected narrative variants emitted as REAL BINDS
- *                    at their source path, once, before definitions —
- *                    the receiving kernel gains the document as facts
- *
- *   `--` comments still appear, but carry courtesy narration only.
- *
- * ANNOTATION HONESTY (the storyboard's hard core): reliability and
- * latency are emitted ONLY when an observed posterior exists at
- * `<tool>._prior.reliability` / `<tool>._prior.latency` (the stdlib
- * reliability-rule convention). No posterior → no annotation. This
- * module never authors a number.
- *
- * Variant election (label groups): a label resolves to a cell; if that
- * cell has string-valued children they are variants (short/medium/
- * long); vend elects the largest that fits the remaining budget, falls
- * back to the smallest, and records the election on the session. This
- * is frame-time election by budget — beat 5.
+ * Everything vend promised still holds and is still enforced by the
+ * V1–V19 suite: every load-bearing fact a receivable statement (the
+ * strip guard), annotation honesty (no posterior → no annotation),
+ * omissions spoken, expiry at the offering, temporal meet, chain
+ * provenance. The session machinery (continueSession/expand) and the
+ * frame grammar helpers are re-exported from elect-frame.ts so every
+ * existing consumer keeps its import path.
  */
 
 import { Sequence } from './sequence';
@@ -53,6 +37,13 @@ import { renderTypeFt } from '../src/hoist';
 import { timeHorizon } from './validity';
 import { receiveDocument } from './receive-doc';
 import { receiveCall } from './receive-calls';
+import { declareConcern } from './case';
+import { electFrame, sessionExpiry, quote } from './elect-frame';
+
+export {
+  electLabel, continueSession, expand,
+  type ContinueResult, type ExpandResult,
+} from './elect-frame';
 
 export type VendRequest = {
   /** Session id; omitted → derived from the kernel clock + counter. */
@@ -81,341 +72,43 @@ export type VendResult = {
   chainReports: Array<{ session: string; ft: string }>;
 };
 
-const approxTokens = (s: string): number => Math.ceil(s.length / 4);
+/** The degenerate walk spec behind vend: declared once per kernel,
+ *  lazily, as facts like any other concern — never pre-filled if an
+ *  owner already authored it (facts narrow, don't overwrite). */
+export const TOOLS_CONCERN = 'tools';
 
-/** Render a fn type's signature halves in the receivable form. */
-function fnSignature(type: Type): { params: string; returns: string } {
-  const paramT = constraintOf(type, 'param')?.args[0] as Type | undefined;
-  const returnsT = constraintOf(type, 'returns')?.args[0] as Type | undefined;
-  const params = paramT
-    ? renderTypeFt(paramT).replace(/\s+/g, ' ').replace(/^\{\s*/, '(').replace(/\s*\}$/, ')')
-    : '()';
-  const returns = returnsT ? renderTypeFt(returnsT).replace(/\s+/g, ' ') : '{ ok: true }';
-  return { params, returns };
-}
-
-/** Collapse whitespace for single-line string binds (elected narrative
- *  variants are prose; the emitted bind must stay one statement). */
-const oneLine = (s: string): string => s.replace(/\s+/g, ' ').trim();
-
-const quote = (s: string): string => JSON.stringify(oneLine(s));
-
-/** Label references inside description text: `[[dotted.path]]` with no
- *  spaces or colon — distinct from expansion tokens (`[[doc:… : …]]`)
- *  and the omission token (`[[more : …]]`). */
-const LABEL_REF = /\[\[([A-Za-z_][A-Za-z0-9_.]*)\]\]/g;
-
-function labelRefsIn(text: string): string[] {
-  const out: string[] = [];
-  for (const m of text.matchAll(LABEL_REF)) out.push(m[1]);
-  return out;
-}
-
-/** Resolve a label to text. Direct string cell → that text. Cell with
- *  string-valued children → a VARIANT GROUP: elect the largest variant
- *  fitting `budgetTokens`, else the smallest. Null when nothing there. */
-export function electLabel(
-  seq: Sequence,
-  label: string,
-  budgetTokens: number,
-): { text: string; variant: string | null } | null {
-  const direct = seq.get(label);
-  if (typeof direct === 'string') return { text: direct, variant: null };
-  const variants: Array<{ key: string; text: string }> = [];
-  for (const key of seq.keys(label)) {
-    const v = seq.get(`${label}.${key}`);
-    if (typeof v === 'string') variants.push({ key, text: v });
-  }
-  if (variants.length === 0) return null;
-  variants.sort((a, b) => b.text.length - a.text.length); // largest first
-  const fitting = variants.find((v) => approxTokens(v.text) <= budgetTokens);
-  const chosen = fitting ?? variants[variants.length - 1];
-  return { text: chosen.text, variant: chosen.key };
-}
-
-type PriorLatency = { family?: string; rate?: number; mu?: number; sigma?: number };
-type PriorReliability = { alpha?: number; beta?: number };
-
-/** The latency suffix for a definition line — ONLY from an observed
- *  posterior mounted at `<path>._prior.latency`. Absent → ''. */
-function latencySuffix(seq: Sequence, path: string): string {
-  const p = seq.get(`${path}._prior.latency`) as PriorLatency | undefined;
-  if (!p || typeof p !== 'object') return '';
-  if ((p.family === 'exponential' || p.family === 'exp') && typeof p.rate === 'number') {
-    return ` ~survival(exp, ${p.rate})`;
-  }
-  if (p.family === 'lognormal' && typeof p.mu === 'number' && typeof p.sigma === 'number') {
-    return ` ~lognormal(mu=${p.mu}, sigma=${p.sigma})`;
-  }
-  return '';
+function ensureToolsConcern(seq: Sequence): void {
+  if (seq.getCell(`_concerns.${TOOLS_CONCERN}.roots`)?.value !== undefined) return;
+  declareConcern(seq, TOOLS_CONCERN, {
+    roots: [''],
+    axes: ['structural'],
+    typeKind: 'fn',
+    value: { base: 1, access: 0, preference: 0, temporal: 0 },
+  });
 }
 
 /** Render the kernel's tool surface as an ft document for a client,
- *  under constraints, and open a session for continuance. */
+ *  under constraints, and open a session for continuance — the
+ *  tools-weighted degenerate election. */
 export function vend(seq: Sequence, req: VendRequest = {}): VendResult {
-  const now = seq.now();
-  const ttl = req.ttlMs ?? 3_600_000;
-  const expiresAt = now + ttl;
-  const sessionId = req.session ?? `s${now.toString(36)}${(vendCounter++).toString(36)}`;
-  const budget = req.maxTokens ?? Infinity;
-  const expandTokens: string[] = [];
-  const chainSessions = new Set<string>();
-
-  // ── selection: fn-typed cells outside `_` scopes ─────────────────
-  const candidates: Array<{ path: string; type: Type }> = [];
-  const walkPaths = (prefix: string): void => {
-    for (const key of seq.keys(prefix || undefined)) {
-      if (key.startsWith('_')) continue;
-      const path = prefix ? `${prefix}.${key}` : key;
-      const t = seq.rawTypeAt(path);
-      // EXPIRY IS ENFORCED AT THE OFFERING (V13): a tool whose type
-      // carries a time bound in the past — a received grant that has
-      // run out — is not offered, with no session machinery involved.
-      if (t?.kind === 'fn') {
-        const horizons = (t.constraints ?? [])
-          .map((c) => timeHorizon(c))
-          .filter((h): h is number => h !== null);
-        if (horizons.length === 0 || Math.min(...horizons) >= now) {
-          candidates.push({ path, type: t });
-        }
-      }
-      walkPaths(path);
-    }
-  };
-  walkPaths('');
-  candidates.sort((a, b) => a.path.localeCompare(b.path));
-
-  const descOf = (path: string): string | undefined => {
-    const d = seq.get(`${path}._description`);
-    return typeof d === 'string' ? d : undefined;
-  };
-
-  const q = req.query?.toLowerCase();
-  const matches = q
-    ? candidates.filter(({ path }) =>
-        path.toLowerCase().includes(q) || (descOf(path)?.toLowerCase().includes(q) ?? false))
-    : candidates;
-
-  const capped = req.maxTools !== undefined ? matches.slice(0, req.maxTools) : matches;
-  const omitted: string[] = matches.slice(capped.length).map((c) => c.path);
-
-  // ── document assembly, budget-aware ──────────────────────────────
-  const lines: string[] = [];
-  let spent = 0;
-  const emit = (s: string): void => {
-    lines.push(s);
-    spent += approxTokens(s + '\n');
-  };
-
-  emit(`-- vended by sequence·v2 · session ${sessionId} · comments are courtesy; every load-bearing fact below is a statement`);
-  emit('');
-
-  // Preludes: every label referenced by ≥1 selected descriptions,
-  // deduped, elected by budget, emitted ONCE as real binds before any
-  // definition (the dependency chain forces the prelude — beat 8).
-  const labels: string[] = [];
-  const seen = new Set<string>();
-  for (const { path } of capped) {
-    for (const l of labelRefsIn(descOf(path) ?? '')) {
-      if (!seen.has(l)) { seen.add(l); labels.push(l); }
-    }
-  }
-  const elected: Record<string, string | null> = {};
-  for (const label of labels) {
-    // Elect against HALF the remaining budget: a prelude that ate the
-    // whole window would starve the definitions it introduces.
-    const doc = electLabel(seq, label, Math.max(0, (budget - spent) / 2));
-    if (!doc) continue;
-    const line = `${label} = ${quote(doc.text)}`;
-    if (spent + approxTokens(line) > budget) {
-      const token = `[[doc:${label} : expand for the full documentation]]`;
-      expandTokens.push(token);
-      emit(`-- ${token}`);
-      continue;
-    }
-    elected[label] = doc.variant;
-    emit(line);
-  }
-  if (labels.length > 0) emit('');
-
-  // Tool definitions: receivable ft, one block per tool. The signature
-  // line may carry an OBSERVED latency distribution suffix; validity,
-  // reliability and description ride as sibling-fact binds.
-  const vended: string[] = [];
-  for (let i = 0; i < capped.length; i++) {
-    const { path, type } = capped[i];
-    const { params, returns } = fnSignature(type);
-
-    const block: string[] = [`${path} = ${params} -> ${returns}${latencySuffix(seq, path)}`];
-    const desc = descOf(path);
-    if (desc !== undefined) block.push(`${path}._description = ${quote(desc)}`);
-    const rel = seq.get(`${path}._prior.reliability`) as PriorReliability | undefined;
-    if (rel && typeof rel.alpha === 'number' && typeof rel.beta === 'number') {
-      block.push(`${path}._reliability = { alpha: ${rel.alpha}, beta: ${rel.beta} }`);
-    }
-    // The latency SUFFICIENT STATISTICS ride alongside the ~survival
-    // display form: a merge or planner needs the evidence (gamma shape/
-    // rate), not just the point rate.
-    const latPrior = seq.get(`${path}._prior.latency`) as
-      { gamma?: { shape?: number; rate?: number } } | undefined;
-    if (typeof latPrior?.gamma?.shape === 'number' && typeof latPrior?.gamma?.rate === 'number') {
-      block.push(`${path}._latency = { shape: ${latPrior.gamma.shape}, rate: ${latPrior.gamma.rate} }`);
-    }
-    // TEMPORAL MEET: a tool whose type already carries a time bound (a
-    // received grant being re-vended) can never be granted PAST that
-    // bound — validity only tightens through the chain (beat 12).
-    const horizons = (type.constraints ?? [])
-      .map((c) => timeHorizon(c))
-      .filter((h): h is number => h !== null);
-    block.push(`${path}._validUntil = ${Math.min(expiresAt, ...horizons)}`);
-    // CHAIN PROVENANCE (beat 12): a received grant being re-vended
-    // extends its origin chain and owes each upstream session a report.
-    const parentChain = seq.get(`${path}._origin.chain`);
-    if (typeof parentChain === 'string' && parentChain.length > 0) {
-      block.push(`${path}._origin.chain = "${parentChain} ${sessionId}"`);
-      for (const upstream of parentChain.split(' ')) {
-        chainSessions.add(upstream);
-      }
-    }
-    const blockText = block.join('\n');
-
-    // Budget check BEFORE emitting: overflow is spoken, never a silent
-    // mid-definition cut. A tool whose FULL form does not fit is first
-    // offered as a receivable STUB (looser types are never wrong) with
-    // its complete definition behind a redeemable type-expansion token
-    // (V16/beat 8); only if even the stub cannot fit is it omitted.
-    if (spent + approxTokens(blockText) > budget) {
-      const token = `[[type:${path} : expand for the full definition]]`;
-      const stub = [
-        `${path} = (input: { }) -> { }`,
-        `${path}._expandType = ${quote(token)}`,
-      ].join('\n');
-      if (spent + approxTokens(stub) <= budget) {
-        expandTokens.push(token);
-        emit(stub);
-        emit('');
-        vended.push(path);
-        continue;
-      }
-      omitted.push(...capped.slice(i).map((c) => c.path));
-      break;
-    }
-    emit(blockText);
-    emit('');
-    vended.push(path);
-  }
-
-  if (omitted.length > 0) {
-    const token = `[[more : ${omitted.length} more matching tool(s) — narrow the query or raise the budget]]`;
-    expandTokens.push(token);
-    emit(`-- ${token}`);
-    emit('');
-  }
-
-  // The continuance contract, typed and receivable.
-  emit(`_sessions.${sessionId}.expiresAt = ${expiresAt}`);
-  emit(`_sessions.${sessionId}.continue = (ft: string) -> { ok: boolean }`);
-  emit(`_sessions.${sessionId}.expand = (token: string) -> { content: string, costTokens: number }`);
-
-  // ── the session record + endpoints, on the store like everything ──
-  const base = `_sessions.${sessionId}`;
-  seq.insert({ path: `${base}.createdAt`, value: now });
-  seq.insert({ path: `${base}.expiresAt`, value: expiresAt });
-  seq.insert({ path: `${base}.tools`, value: vended.join(' ') });
-  for (const [label, variant] of Object.entries(elected)) {
-    seq.insert({ path: `${base}.elected.${label}`, value: variant ?? 'direct' });
-  }
-  // Frame snapshot: continuance validates against WHAT WAS VENDED, not
-  // whatever the surface later becomes (stale-frame, V7). `withImpl`
-  // records which tools were executable here at vend time — losing one
-  // of those impls is the surface change a client must hear about.
-  seq.insert({
-    path: `${base}.frame`,
-    value: { tools: [...vended], withImpl: vended.filter((t) => seq.impls.has(t)) },
+  ensureToolsConcern(seq);
+  const r = electFrame(seq, {
+    concern: TOOLS_CONCERN,
+    session: req.session,
+    query: req.query,
+    capacities: req.maxTools !== undefined ? { items: req.maxTools } : {},
+    maxTokens: req.maxTokens,
+    ttlMs: req.ttlMs,
   });
-  seq.impls.set(`${base}.continue`, async (input: unknown) => {
-    const ft = (input as { ft?: string })?.ft ?? (typeof input === 'string' ? input : '');
-    return continueSession(seq, sessionId, ft);
-  });
-  seq.impls.set(`${base}.expand`, (input: unknown) => {
-    const token = (input as { token?: string })?.token ?? (typeof input === 'string' ? input : '');
-    return expand(seq, sessionId, token);
-  });
-
-  const chainReports = [...chainSessions].map((session) => ({
-    session,
-    ft: `_sessions.${session}.chain.${sessionId} = { tools: "${vended.join(' ')}", expiresAt: ${expiresAt} }`,
-  }));
-
-  return { sessionId, text: lines.join('\n'), tools: vended, omitted, expandTokens, expiresAt, chainReports };
-}
-
-let vendCounter = 0;
-
-export type ContinueResult =
-  | { ok: true; applied: number; errors: string[] }
-  | { ok: false; reason: 'unknown-session' | 'expired' | 'stale-frame'; detail?: string };
-
-function sessionExpiry(seq: Sequence, sessionId: string): number | undefined {
-  const v = seq.get(`_sessions.${sessionId}.expiresAt`);
-  return typeof v === 'number' ? v : undefined;
-}
-
-/** The continue endpoint's kernel half: ft issued against a session is
- *  applied only while the session is live, and only against the frame
- *  that was actually vended. Hosts bind this to whatever transport they
- *  run — the contract is the data. */
-export async function continueSession(
-  seq: Sequence,
-  sessionId: string,
-  ft: string,
-): Promise<ContinueResult> {
-  const expiresAt = sessionExpiry(seq, sessionId);
-  if (expiresAt === undefined) return { ok: false, reason: 'unknown-session' };
-  if (seq.now() > expiresAt) return { ok: false, reason: 'expired' };
-
-  // Stale-frame check (V7): a statement that targets a tool from this
-  // session's frame snapshot which the kernel no longer offers gets a
-  // typed answer — not a crash, not silent success against a world the
-  // client never saw.
-  const frame = seq.get(`_sessions.${sessionId}.frame`) as
-    { tools?: string[]; withImpl?: string[] } | undefined;
-  for (const t of frame?.tools ?? []) {
-    const typeGone = seq.rawTypeAt(t)?.kind !== 'fn';
-    const implGone = (frame?.withImpl ?? []).includes(t) && !seq.impls.has(t);
-    if ((typeGone || implGone) && ft.includes(t)) {
-      return { ok: false, reason: 'stale-frame', detail: t };
-    }
-  }
-
-  const r = await receiveDocument(seq, ft);
-  return { ok: true, applied: r.applied, errors: r.errors };
-}
-
-export type ExpandResult =
-  | { ok: true; content: string; costTokens: number }
-  | { ok: false; reason: 'unknown-session' | 'expired' | 'unknown-token'; token?: string };
-
-/** Redeem an expansion token through a live session: the full content
- *  plus its honest cost. `[[doc:…]]` yields the document text;
- *  `[[type:…]]` yields the tool's COMPLETE receivable definition line
- *  (the stub's full form). Unknown tokens are refused BY NAME. */
-export function expand(seq: Sequence, sessionId: string, token: string): ExpandResult {
-  const expiresAt = sessionExpiry(seq, sessionId);
-  if (expiresAt === undefined) return { ok: false, reason: 'unknown-session' };
-  if (seq.now() > expiresAt) return { ok: false, reason: 'expired' };
-  const m = /^\[\[(doc|type):([^\s:]+) : /.exec(token);
-  if (!m) return { ok: false, reason: 'unknown-token', token };
-  if (m[1] === 'type') {
-    const type = seq.rawTypeAt(m[2]);
-    if (type?.kind !== 'fn') return { ok: false, reason: 'unknown-token', token };
-    const { params, returns } = fnSignature(type);
-    const line = `${m[2]} = ${params} -> ${returns}${latencySuffix(seq, m[2])}`;
-    return { ok: true, content: line, costTokens: approxTokens(line) };
-  }
-  const doc = electLabel(seq, m[2], Infinity);
-  if (!doc) return { ok: false, reason: 'unknown-token', token };
-  return { ok: true, content: doc.text, costTokens: approxTokens(doc.text) };
+  return {
+    sessionId: r.sessionId,
+    text: r.text,
+    tools: r.tools,
+    omitted: r.omitted,
+    expandTokens: r.expandTokens,
+    expiresAt: r.expiresAt,
+    chainReports: r.chainReports,
+  };
 }
 
 export type RevendResult =

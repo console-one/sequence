@@ -218,6 +218,18 @@ export type { CallOutcome, ReceiveCallsResult } from './receive-calls';
 export { receiveDocument } from './receive-doc';
 export type { ReceiveDocResult } from './receive-doc';
 
+// ─── The elected frame — cells → case → election → commitment ───────────
+// THE one frame call (stage 1): a declared concern (walk spec as
+// `_concerns.*` facts) poses the question, ONE walk engine yields cells
+// with assigned meaning, ONE value expression + selectUnderPrices elect
+// under declared capacities, and the commitment (document + session +
+// duals + owed endpoints) rides the vending machinery. vend() below is
+// the tools-weighted degenerate case.
+export { declareConcern, readConcern, caseWalk, cellTimeBound } from './case';
+export type { ConcernSpec, ConcernValueWeights, CaseInput, CaseYield } from './case';
+export { electFrame } from './elect-frame';
+export type { FrameRequest, FrameResult } from './elect-frame';
+
 // ─── Vending — tool compilation for clients, on THE kernel ──────────────
 // v2 re-base of src/vend.ts (deletion-ledger direction: the v1 module
 // dies when its consumers re-point here). Every load-bearing fact in a

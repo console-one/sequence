@@ -20,10 +20,12 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { Sequence } from '../sequence';
 import { vend, continueSession, expand, revend, callThroughSession, mergeFrames } from '../vend';
+import { electFrame } from '../elect-frame';
+import { declareConcern } from '../case';
 import { receiveDocument } from '../receive-doc';
 import { timeHorizon } from '../validity';
 import { FT } from '../../src/builder';
-import { createType, param, returns, impl } from '../../src/type';
+import { createType, param, returns, impl, lte } from '../../src/type';
 
 const LEDGER: Set<string> = new Set(
   JSON.parse(
@@ -393,5 +395,133 @@ describe('vending end state — the target', () => {
     const c = new Sequence(() => 1_000_000);
     await receiveDocument(c, rb.text);
     expect(c.get('fs.read._origin.chain')).toBe(`${ra.sessionId} ${rb.sessionId}`);
+  });
+});
+
+// ═══ The elected frame — stage 1 (cells → case → election → commitment) ═══
+
+describe('the elected frame — one election over declared concerns', () => {
+  scenario('E1', 'the declared walk assigns the meaning: same kernel, different concerns → different frames; claims round-trip', async () => {
+    const seq = engine({ t: 1_000_000 });
+    // A future-bounded fact cell — expiry/wake-shaped: a CLAIM, not a
+    // tool, not a class of its own. Its type carries the bound the walk
+    // reads (the same lte($now, T) family timeHorizon() reads).
+    seq.insert({ path: 'standup.next', type: createType('number', [lte('$now', 1_030_000)]) });
+    seq.insert({ path: 'standup.next', value: 1_030_000 });
+    declareConcern(seq, 'upcoming', {
+      withinHorizon: true, horizon: 100_000,
+      value: { base: 1, access: 0, preference: 0, temporal: 1 },
+    });
+    declareConcern(seq, 'toolsOnly', {
+      typeKind: 'fn',
+      value: { base: 1, access: 0, preference: 0, temporal: 0 },
+    });
+    // Under the temporal walk the claim is the WHOLE frame (tools carry
+    // no time bound here); under the fn walk the tools are — one engine,
+    // meaning assigned by the declared case, never by candidate classes.
+    const up = electFrame(seq, { concern: 'upcoming' });
+    expect(up.admitted).toEqual(['standup.next']);
+    const tl = electFrame(seq, { concern: 'toolsOnly' });
+    expect(tl.admitted).toEqual(['fs.read', 'fs.write']);
+    // The claim round-trips: a second kernel holds the fact AND its bound.
+    const rx = new Sequence(() => 1_000_000);
+    const rr = await receiveDocument(rx, up.text);
+    expect(rr.errors).toEqual([]);
+    expect(rx.get('standup.next')).toBe(1_030_000);
+    expect(rx.get('standup.next._validUntil')).toBe(1_030_000);
+  });
+
+  scenario('E2', 'omissions spoken + duals reported: scarcity has a PRICE and the frame carries it', () => {
+    const seq = engine({ t: 1_000_000 });
+    for (let i = 0; i < 6; i++) {
+      seq.insert({ path: `notes.n${i}`, value: `note number ${i} with some text to size it` });
+    }
+    declareConcern(seq, 'notes', {
+      roots: ['notes'],
+      value: { base: 1, access: 0, preference: 0, temporal: 0 },
+    });
+    const loose = electFrame(seq, { concern: 'notes', capacities: { tokens: 10_000 } });
+    expect(loose.omitted).toEqual([]);
+    expect(loose.duals.tokens).toBe(0); // slack capacity: attention is free
+    const tight = electFrame(seq, { concern: 'notes', capacities: { tokens: 40 } });
+    expect(tight.admitted.length).toBeGreaterThan(0);
+    expect(tight.admitted.length).toBeLessThan(6);
+    expect(tight.omitted.length).toBe(6 - tight.admitted.length);
+    expect(tight.text).toContain('[[more :'); // omission spoken, never silent
+    expect(tight.duals.tokens).toBeGreaterThan(0); // saturation IS a rising price
+    // The price is committed as a session fact on the store, not narrated.
+    expect(seq.get(`_sessions.${tight.sessionId}.duals.tokens`)).toBe(tight.duals.tokens);
+  });
+
+  scenario('E3', 'commitment round-trips at a second kernel — tools, claims and duals — with every comment stripped', async () => {
+    const seq = engine({ t: 1_000_000 });
+    seq.insert({ path: 'standup.next', type: createType('number', [lte('$now', 1_030_000)]) });
+    seq.insert({ path: 'standup.next', value: 1_030_000 });
+    declareConcern(seq, 'brief', {
+      horizon: 100_000,
+      value: { base: 1, access: 1, preference: 0, temporal: 1 },
+    });
+    const r = electFrame(seq, { concern: 'brief', capacities: { tokens: 10_000 }, ttlMs: 60_000 });
+    expect(r.tools).toEqual(['fs.read', 'fs.write']);
+    expect(r.admitted).toContain('standup.next');
+    // The strip guard is the commitment's integrity condition: what was
+    // elected reconstructs from statements alone.
+    const rx = new Sequence(() => 1_000_000);
+    const rr = await receiveDocument(rx, stripComments(r.text));
+    expect(rr.errors).toEqual([]);
+    expect(rx.rawTypeAt('fs.read')?.kind).toBe('fn');
+    expect(rx.rawTypeAt('fs.write')?.kind).toBe('fn');
+    expect(rx.get('standup.next')).toBe(1_030_000);
+    expect(rx.get('standup.next._validUntil')).toBe(1_030_000);
+    expect(rx.get(`_sessions.${r.sessionId}.duals.tokens`)).toBe(r.duals.tokens);
+    expect(rx.get(`_sessions.${r.sessionId}.expiresAt`)).toBe(r.expiresAt);
+  });
+
+  scenario('E4', 'vend ≡ the tools-weighted degenerate election: byte-equivalent frames on the fixture', () => {
+    const a = engine({ t: 1_000_000 });
+    const b = engine({ t: 1_000_000 });
+    // The concern vend declares lazily, declared by hand here — vend must
+    // add NOTHING beyond this data.
+    declareConcern(b, 'tools', {
+      roots: [''], axes: ['structural'], typeKind: 'fn',
+      value: { base: 1, access: 0, preference: 0, temporal: 0 },
+    });
+    const va = vend(a, { query: 'fs', maxTokens: 2000, session: 'sE4', ttlMs: 100_000 });
+    const fb = electFrame(b, {
+      concern: 'tools', query: 'fs', maxTokens: 2000, session: 'sE4', ttlMs: 100_000,
+    });
+    expect(fb.text).toBe(va.text); // byte-equivalent
+    expect(fb.tools).toEqual(va.tools);
+    // Under a tool cap the elected head is the old slice — same bytes,
+    // with the price of a tool slot now spoken in both.
+    const va2 = vend(a, { maxTools: 1, session: 'sE4b', ttlMs: 100_000 });
+    const fb2 = electFrame(b, {
+      concern: 'tools', capacities: { items: 1 }, session: 'sE4b', ttlMs: 100_000,
+    });
+    expect(fb2.text).toBe(va2.text);
+    expect(va2.tools).toEqual(['fs.read']);
+    expect(va2.omitted).toEqual(['fs.write']);
+  });
+
+  scenario('E5', 'capacities BIND: tighter budget → smaller, NESTED admitted set (monotone)', () => {
+    const seq = engine({ t: 1_000_000 });
+    for (let i = 0; i < 8; i++) {
+      seq.insert({ path: `notes.n${i}`, value: `note ${i} body text for sizing` });
+    }
+    declareConcern(seq, 'notes', {
+      roots: ['notes'],
+      value: { base: 1, access: 0, preference: 0, temporal: 0 },
+    });
+    const at = (tokens: number): Set<string> =>
+      new Set(electFrame(seq, { concern: 'notes', capacities: { tokens } }).admitted);
+    const s1 = at(30);
+    const s2 = at(60);
+    const s3 = at(10_000);
+    expect(s1.size).toBeGreaterThan(0);
+    expect(s1.size).toBeLessThan(s2.size);
+    expect(s2.size).toBeLessThan(s3.size);
+    expect(s3.size).toBe(8);
+    for (const p of s1) expect(s2.has(p)).toBe(true);
+    for (const p of s2) expect(s3.has(p)).toBe(true);
   });
 });
