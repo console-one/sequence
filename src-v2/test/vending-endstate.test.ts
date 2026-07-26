@@ -559,4 +559,31 @@ describe('the elected frame — one election over declared concerns', () => {
     expect(seq.get('_relevance.casey.fs.read')).toMatchObject({ alpha: 2, beta: 2 });
     expect(seq.get('_relevance.casey.fs.write')).toMatchObject({ alpha: 1, beta: 2 });
   });
+
+  scenario('E7', 'declared costs BIND: a `._costs` dimension under a unit capacity admits at most one of a group', () => {
+    const seq = engine({ t: 1_000_000 });
+    // Three alternative renderings of one section — richest first. Each
+    // declares one unit of the section's slot dimension; only capacity
+    // decides which alternative speaks. No switch, no ladder walker.
+    seq.insert({ path: 'report.daily.r0', value: 'the full report body with every line of detail included' });
+    seq.insert({ path: 'report.daily.r0._costs', value: { slot_daily: 1 } });
+    seq.insert({ path: 'report.daily.r1', value: 'the medium report with a few more words of body' });
+    seq.insert({ path: 'report.daily.r1._costs', value: { slot_daily: 1 } });
+    seq.insert({ path: 'report.daily.r2', value: 'daily: 3 items' });
+    seq.insert({ path: 'report.daily.r2._costs', value: { slot_daily: 1 } });
+    declareConcern(seq, 'report', { roots: ['report'], value: { base: 1, access: 0, preference: 1, temporal: 0 } });
+    // Declared preference: richer rungs claim more value (data, not code).
+    seq.insert({ path: '_preferences.reader.weights.report.daily.r0', value: 3 });
+    seq.insert({ path: '_preferences.reader.weights.report.daily.r1', value: 2 });
+    seq.insert({ path: '_preferences.reader.weights.report.daily.r2', value: 1 });
+
+    // Roomy tokens: the slot capacity alone binds — exactly ONE rung, the richest.
+    const roomy = electFrame(seq, { concern: 'report', client: 'reader', capacities: { tokens: 10_000, slot_daily: 1 } });
+    expect(roomy.admitted).toEqual(['report.daily.r0']);
+    // Tight tokens: the full rung no longer fits; the slot still admits
+    // at most one — the fullest AFFORDABLE rung speaks.
+    const tight = electFrame(seq, { concern: 'report', client: 'reader', capacities: { tokens: 12, slot_daily: 1 } });
+    expect(tight.admitted).toEqual(['report.daily.r2']);
+    expect(tight.omitted).toContain('report.daily.r0');
+  });
 });

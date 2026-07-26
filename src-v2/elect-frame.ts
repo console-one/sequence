@@ -288,9 +288,13 @@ function foldSessionRelevance(seq: Sequence, client: string): void {
   }
 }
 
-/** cost(cell): tokens of its receivable rendering, one item slot, and
- *  — when an observed latency posterior exists — its expected ms.
- *  Every number observed, never authored. */
+/** cost(cell): tokens of its receivable rendering, one item slot,
+ *  — when an observed latency posterior exists — its expected ms, and
+ *  any dimensions the cell DECLARES at its `._costs` sibling (e.g.
+ *  `{ sec_overdue: 1 }`: with a unit capacity on that dimension, a
+ *  group of alternatives admits at most one — mutual exclusion as
+ *  declared data, never code). Numbers observed or declared on the
+ *  cell — this module authors none. */
 function costsOfItem(seq: Sequence, item: CaseYield, renderedText: string): Record<string, number> {
   const costs: Record<string, number> = {
     tokens: approxTokens(renderedText + '\n'),
@@ -300,6 +304,12 @@ function costsOfItem(seq: Sequence, item: CaseYield, renderedText: string): Reco
   if (lat && (lat.family === 'exponential' || lat.family === 'exp')
       && typeof lat.rate === 'number' && lat.rate > 0) {
     costs.timeMs = 1 / lat.rate;
+  }
+  const declared = seq.getCell(`${item.path}._costs`)?.value;
+  if (declared !== null && typeof declared === 'object') {
+    for (const [dim, v] of Object.entries(declared as Record<string, unknown>)) {
+      if (typeof v === 'number' && Number.isFinite(v) && v >= 0) costs[dim] = v;
+    }
   }
   return costs;
 }
