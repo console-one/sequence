@@ -347,6 +347,13 @@ export async function callThroughSession(
   if (seq.now() > expiresAt) return { ok: false, reason: 'expired' };
   const frame = seq.get(`_sessions.${sessionId}.frame`) as { tools?: string[] } | undefined;
   if (frame?.tools && !frame.tools.includes(fn) && !fn.startsWith('_sessions.')) {
+    // The ask is EVIDENCE even though the call is refused: an explicit
+    // request for a tool outside the frame is the strongest signal the
+    // election under-valued it. Recorded before refusing; the fold
+    // treats engaged-but-not-admitted as success (redemption) at the
+    // client's next election. The grant itself stands — commitment
+    // integrity is not weakened by learning from the refusal.
+    seq.insert({ path: `_sessions.${sessionId}.engaged.${fn}`, value: true });
     return { ok: false, reason: 'not-in-frame' };
   }
   const fnType = seq.rawTypeAt(fn);

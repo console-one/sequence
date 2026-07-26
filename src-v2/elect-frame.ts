@@ -271,21 +271,49 @@ function foldSessionRelevance(seq: Sequence, client: string): void {
     const base = `_sessions.${sid}`;
     if (seq.getCell(`${base}.client`)?.value !== client) continue;
     if (seq.getCell(`${base}.relevanceFolded`)?.value === true) continue;
-    const admitted = seq.getCell(`${base}.admitted`)?.value;
-    if (typeof admitted === 'string' && admitted !== '') {
-      for (const path of admitted.split(' ')) {
-        const engaged = seq.getCell(`${base}.engaged.${path}`)?.value === true;
-        const relPath = `_relevance.${client}.${path}`;
-        const prior = (seq.getCell(relPath)?.value as
-          { alpha?: number; beta?: number } | undefined) ?? { alpha: 1, beta: 1 };
-        seq.insert({
-          path: relPath,
-          value: conjugateUpdate('beta', prior, engaged ? 'success' : 'failure'),
-        });
-      }
+    const admittedRaw = seq.getCell(`${base}.admitted`)?.value;
+    const admittedPaths =
+      typeof admittedRaw === 'string' && admittedRaw !== '' ? admittedRaw.split(' ') : [];
+    const fold = (path: string, outcome: 'success' | 'failure'): void => {
+      const relPath = `_relevance.${client}.${path}`;
+      const prior = (seq.getCell(relPath)?.value as
+        { alpha?: number; beta?: number } | undefined) ?? { alpha: 1, beta: 1 };
+      seq.insert({ path: relPath, value: conjugateUpdate('beta', prior, outcome) });
+    };
+    for (const path of admittedPaths) {
+      const engaged = seq.getCell(`${base}.engaged.${path}`)?.value === true;
+      fold(path, engaged ? 'success' : 'failure');
+    }
+    // REDEMPTION (the omission-correction signal, 2026-07-26): an
+    // engaged mark on a path the frame did NOT admit means the client
+    // explicitly asked for something we hid — the strongest evidence
+    // the election under-valued it. Folds as success, so a hidden cell
+    // can earn its way back without exploration. (The ask itself is
+    // recorded by callThroughSession even when the call is refused as
+    // not-in-frame — the grant stands; the asking is evidence.)
+    const admittedSet = new Set(admittedPaths);
+    for (const path of engagedLeafPaths(seq, `${base}.engaged`)) {
+      if (!admittedSet.has(path)) fold(path, 'success');
     }
     seq.insert({ path: `${base}.relevanceFolded`, value: true });
   }
+}
+
+/** Every dotted leaf path under `root` whose cell value is `true` —
+ *  engagement marks nest (`engaged.content.put`), so enumeration is a
+ *  walk, not a keys() read. A mark that is also a prefix of another
+ *  mark is still its own leaf (value check per node, walk continues). */
+function engagedLeafPaths(seq: Sequence, root: string): string[] {
+  const out: string[] = [];
+  const walk = (prefix: string): void => {
+    for (const k of seq.keys(prefix)) {
+      const p = `${prefix}.${k}`;
+      if (seq.getCell(p)?.value === true) out.push(p.slice(root.length + 1));
+      walk(p);
+    }
+  };
+  walk(root);
+  return out;
 }
 
 /** cost(cell): tokens of its receivable rendering, one item slot,

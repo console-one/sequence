@@ -586,4 +586,41 @@ describe('the elected frame — one election over declared concerns', () => {
     expect(tight.admitted).toEqual(['report.daily.r2']);
     expect(tight.omitted).toContain('report.daily.r0');
   });
+
+  scenario('E8', 'REDEMPTION: asking for a HIDDEN tool is refused — and recorded — and the tool RETURNS in the next frame', async () => {
+    const clock = { t: 1_000_000 };
+    const seq = engine(clock);
+    declareConcern(seq, 'work', {
+      typeKind: 'fn',
+      value: { base: 1, access: 0, preference: 0, temporal: 0 },
+    });
+    // Frame 1 under items:1 — one tool served, one hidden.
+    const f1 = electFrame(seq, { concern: 'work', client: 'riley', capacities: { items: 1 }, ttlMs: 600_000 });
+    expect(f1.admitted).toHaveLength(1);
+    expect(f1.omitted).toHaveLength(1);
+    const shown = f1.admitted[0];
+    const hidden = f1.omitted[0];
+    // The client asks for the hidden tool anyway. The grant STANDS —
+    // the call is refused as not-in-frame — but the ask is evidence,
+    // recorded on the session before the refusal.
+    const refused = await callThroughSession(seq, f1.sessionId, hidden, {});
+    expect(refused).toEqual({ ok: false, reason: 'not-in-frame' });
+    expect(seq.get(`_sessions.${f1.sessionId}.engaged.${hidden}`)).toBe(true);
+    // The shown tool goes untouched — an ignore.
+    // Frame 2, same capacity: the fold redeems the hidden tool
+    // (engaged-outside-admitted → success) and dings the ignored one —
+    // what they asked for past the frame REPLACES what they ignored.
+    const f2 = electFrame(seq, { concern: 'work', client: 'riley', capacities: { items: 1 } });
+    expect(f2.admitted).toEqual([hidden]);
+    expect(f2.omitted).toContain(shown);
+    expect(seq.get(`_relevance.riley.${hidden}`)).toMatchObject({ alpha: 2, beta: 1 });
+    expect(seq.get(`_relevance.riley.${shown}`)).toMatchObject({ alpha: 1, beta: 2 });
+    // One real ask never counts twice: a third election folds only
+    // f2's session — the redeemed tool records f2's ignore (it was
+    // admitted and untouched), the hidden-then-asked evidence stays.
+    const f3 = electFrame(seq, { concern: 'work', client: 'riley', capacities: { items: 1 } });
+    expect(seq.get(`_relevance.riley.${hidden}`)).toMatchObject({ alpha: 2, beta: 2 });
+    expect(seq.get(`_relevance.riley.${shown}`)).toMatchObject({ alpha: 1, beta: 2 });
+    expect(f3.admitted).toHaveLength(1);
+  });
 });
