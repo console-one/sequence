@@ -292,6 +292,31 @@ function primalRepair(
 ): Set<string> {
   const admitted = new Set(initial);
 
+  // Trial feasibility via per-dim DELTAS against the running usage —
+  // O(dims) per trial instead of usedByDim's O(candidates·dims) full
+  // re-sum, which made the polish phase O(n²·candidates·dims) per
+  // improvement and read as a hang at real surface sizes (the office
+  // frame's 63-section election, 2026-07-26; 66% of samples in
+  // usedByDim). `used` itself is re-derived by usedByDim after every
+  // ACCEPTED move, so capacity-boundary arithmetic stays anchored to
+  // the exact full sums the old code compared.
+  const addFits = (u: Record<string, number>, c: SelectCandidate): boolean => {
+    for (const d of dims) {
+      if (u[d] + (c.costs[d] ?? 0) > capacities[d]) return false;
+    }
+    return true;
+  };
+  const swapFits = (
+    u: Record<string, number>,
+    out: SelectCandidate,
+    inc: SelectCandidate,
+  ): boolean => {
+    for (const d of dims) {
+      if (u[d] - (out.costs[d] ?? 0) + (inc.costs[d] ?? 0) > capacities[d]) return false;
+    }
+    return true;
+  };
+
   // (1) shed until feasible: lowest value-per-constrained-cost first.
   let used = usedByDim(candidates, admitted, dims);
   if (violates(used, capacities, dims)) {
@@ -318,12 +343,9 @@ function primalRepair(
       return db - da || a.id.localeCompare(b.id);
     });
   for (const c of byDensityDesc) {
+    if (!addFits(used, c)) continue;
     admitted.add(c.id);
     used = usedByDim(candidates, admitted, dims);
-    if (violates(used, capacities, dims)) {
-      admitted.delete(c.id);
-      used = usedByDim(candidates, admitted, dims);
-    }
   }
 
   // (3) local polish — the flat analog of the original's swap phase
@@ -343,10 +365,7 @@ function primalRepair(
     let bestAdd: SelectCandidate | null = null;
     for (const cand of positive) {
       if (admitted.has(cand.id)) continue;
-      admitted.add(cand.id);
-      const trial = usedByDim(candidates, admitted, dims);
-      admitted.delete(cand.id);
-      if (violates(trial, capacities, dims)) continue;
+      if (!addFits(used, cand)) continue;
       if (!bestAdd || cand.value > bestAdd.value ||
           (cand.value === bestAdd.value && cand.id.localeCompare(bestAdd.id) < 0)) {
         bestAdd = cand;
@@ -367,12 +386,7 @@ function primalRepair(
         if (admitted.has(inCand.id)) continue;
         const gain = inCand.value - outCand.value;
         if (gain <= 0) continue;
-        admitted.delete(outCand.id);
-        admitted.add(inCand.id);
-        const trial = usedByDim(candidates, admitted, dims);
-        admitted.delete(inCand.id);
-        admitted.add(outCand.id);
-        if (violates(trial, capacities, dims)) continue;
+        if (!swapFits(used, outCand, inCand)) continue;
         if (!bestSwap || gain > bestSwap.gain) bestSwap = { out: outCand.id, in: inCand, gain };
       }
     }
