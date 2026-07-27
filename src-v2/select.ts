@@ -13,8 +13,10 @@
  * PROVENANCE (recovered, not rebuilt): the selection core is extracted
  * from the archived @console-one/compile package's selector — vendored
  * copy last at observatory-app `e045e23^:src/core/cli/vendor/compile.ts`
- * (deleted when seam-5 migrated its GREEDY semantics into view.ts's
- * planView; the beam/Lagrangian strategies stayed archived "until
+ * (deleted when seam-5 migrated its GREEDY semantics into the since-
+ * deleted view.ts planView — 2026-07-26 the elected frame subsumed
+ * that walker too, and greedy survives here as the non-pricing
+ * baseline; the beam/Lagrangian strategies stayed archived "until
  * measured prices exist to feed them"). This module is that recorded
  * re-adoption trigger firing (observatory TECH-DEBT #6) — the attention
  * market is the first consumer that needs the prices themselves.

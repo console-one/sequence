@@ -298,8 +298,8 @@ export function hoistCatalog(tree: Readable, opts: CatalogOptions = {}): HoistRe
   void emitLeaf;
 
   // Per-top-level-head SECTIONS — the frame IS a budgeted view (each
-  // package is one section; the frame renders through the SAME
-  // renderOffers/planView compiler the topic views use). One head's
+  // package is one section; the frame is elected through the SAME
+  // declared-concern election the topic views use). One head's
   // block, self-contained — mirrors the top-level loop body of emitGroup.
   const topHeads = new Set(entries.map(e => e.segments[0]));
   const sections: { id: string; text: string }[] = [];
@@ -325,9 +325,9 @@ export function hoistCatalog(tree: Readable, opts: CatalogOptions = {}): HoistRe
 }
 
 /** The catalog as SECTIONS — the frame's offer-set. Each top-level
- *  package (plus `_types`) is one section; office renders these through
- *  the same renderOffers/planView compiler the topic views use, so the
- *  frame and a topic view are literally the same render operation. */
+ *  package (plus `_types`) is one section; office elects these through
+ *  the same declared-concern election the topic views use, so the
+ *  frame and a topic view are literally the same election call. */
 export function hoistCatalogSections(tree: Readable, opts: CatalogOptions = {}): { id: string; text: string }[] {
   return (hoistCatalog(tree, opts) as unknown as { sections: { id: string; text: string }[] }).sections;
 }

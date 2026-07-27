@@ -47,15 +47,12 @@ export type {
 // laws, and the deployed topic-service admission gate.
 export { withinMax, reachedMin } from './relations';
 
-// ─── Standalone view planning (DSL PROGRAM seam 5 / R5) ─────────────────
-// A ViewSpec is serializable vocabulary: sections in priority order, each
-// offering rungs richest→cheapest with host-gathered costs. planView =
-// pure evaluator → one elected rung per section + spend + the eviction
-// manifest (what the reader is NOT seeing). The expression elects and
-// budgets; it never formats — materialization stays with the host runner.
-// Selection semantics migrated from @console-one/compile's greedy selector
-// (beam/Lagrangian stay archived until measured prices exist).
-export { planView } from './view';
+// planView (the seam-5 greedy ladder walker) was DELETED 2026-07-26:
+// the elected frame (electFrame over declared concerns) subsumed it —
+// its last product consumers (observatory-app's brief/whatnow/events/
+// frame surfaces) migrated to electFrame and the module reached zero
+// dependents across every downstream repo. Its greedy semantics
+// survive as selectUnderPrices' non-pricing baseline strategy.
 
 // ─── Selection under prices (R8/R5 — the attention market) ──────────────
 // selectUnderPrices = the standalone Lagrangian selection evaluator,
@@ -69,9 +66,6 @@ export { selectUnderPrices } from './select';
 export type {
   SelectCandidate, SelectCapacities, SelectOptions, SelectResult,
 } from './select';
-export type {
-  ViewSpec, ViewSection, ViewRung, ViewCost, ViewPlan, ViewPick, ViewEviction,
-} from './view';
 
 // ─── Constraint time horizons (expiry-as-deviation) ─────────────────────
 // timeHorizon reads the CLOSED valid-until family off a serialized
