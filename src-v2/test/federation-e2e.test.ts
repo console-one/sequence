@@ -285,3 +285,53 @@ describe('federation-e2e: full security stack — three peers, mixed traffic', (
     expect(A.get('sessions.alice.note')).toBe("alice's note");
   });
 });
+
+describe('federation-e2e: the wire is honest (seq, sentAt, retractions)', () => {
+  it('retractions travel — un-saying reaches the peer', () => {
+    const A = new Sequence();
+    const B = new Sequence();
+    pairFederation(A, B, { aId: 'A', bId: 'B' });
+
+    A.insert({ path: 'notes.today', value: 'meeting at 3' });
+    expect(B.get('notes.today')).toBe('meeting at 3');
+
+    A.insert({ path: 'notes.today', op: 'invalidate' });
+    expect(A.get('notes.today')).toBeUndefined();
+    // Before this fix, B's copy outlived the owner's withdrawal forever.
+    expect(B.get('notes.today')).toBeUndefined();
+  });
+
+  it('wire records carry a monotonic per-store seq and the authored sentAt', () => {
+    const A = new Sequence(() => 1_234);
+    const B = new Sequence(() => 9_999_999);
+    const wire: Outgoing[] = [];
+    installCrossSequence(A, 'A', (d: Outgoing) => { wire.push(d); receiveFromPeer(B, 'A', d); });
+
+    A.insert({ path: 'a', value: 1 });
+    A.insert({ path: 'b', value: 2 });
+    A.insert({ path: 'a', op: 'invalidate' });
+
+    expect(wire.map(d => d.seq)).toEqual([1, 2, 3]);
+    for (const d of wire) expect(d.sentAt).toBe(1_234);
+    expect(wire[2].op).toBe('invalidate');
+    // A receiver observing a hole in a peer's seq knows a message was
+    // lost (delivery is at-most-once) — detectable, not silent.
+  });
+
+  it("a received fact keeps the sender's authored instant, not arrival time", () => {
+    const A = new Sequence(() => 1_000);
+    const B = new Sequence(() => 2_000_000);
+    installCrossSequence(A, 'A', (d: Outgoing) => {
+      receiveFromPeer(B, 'A', d);
+    });
+    // The block time on B's cell must be A's authored instant: there
+    // is no shared clock, and the fact's truth-time belongs to its
+    // owner, not to the wire's delivery moment.
+    A.insert({ path: 'shared.fact', value: 42 });
+    expect(B.get('shared.fact')).toBe(42);
+    const cell = B.cells().find(c => c.path === 'shared.fact');
+    expect(cell).toBeDefined();
+    const lastBlock = cell!.blocks[cell!.blocks.length - 1];
+    expect(lastBlock.time).toBe(1_000);
+  });
+});
