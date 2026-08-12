@@ -157,6 +157,12 @@ export type InsertInput = {
    *  The public half of what emitter templates could already do —
    *  SnapshotEntry declared this op before the kernel accepted it. */
   op?: 'narrow' | 'invalidate';
+  /** When this fact became true, on the AUTHOR's clock. Defaults to
+   *  this kernel's clock at insert. Time is an input of the transition,
+   *  not something the kernel samples: replay and cross-kernel receipt
+   *  must be able to carry the original instant, or time-conditioned
+   *  state (decay, leases, liveness) is not replay-stable. */
+  time?: number;
 };
 
 export type InsertResult = { block: Block; changes: Delta[]; suspended: boolean };
@@ -205,7 +211,7 @@ export class Sequence {
       type: input.type,
       rules: input.rules,
       where: input.where,
-      time: this.clock(),
+      time: input.time ?? this.clock(),
       author: input.author,
       status: 'applied',
     };

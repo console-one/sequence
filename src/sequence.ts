@@ -982,7 +982,9 @@ export class Sequence {
     // every fixpoint pass, appearing as a real mutation and blocking
     // convergence.
     const wasOutermost = this.cascadeTime === null;
-    const time = this.cascadeTime ?? this.clock();
+    // Explicit BlockOpts.time wins at the outermost frame (replay,
+    // cross-kernel receipt); nested mounts keep the frozen cascade time.
+    const time = this.cascadeTime ?? blockOpts?.time ?? this.clock();
     if (wasOutermost) this.cascadeTime = time;
     try {
     this._writeBind('_rt', time);

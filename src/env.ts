@@ -52,7 +52,11 @@ export function loadEnv(clock: () => number, opts?: EnvOpts): Sequence {
 
   if (opts?.entries) {
     for (const entry of opts.entries) {
-      seq.mount(entry.op, entry.path, entry.value);
+      // Time-faithful replay: entries that recorded their original
+      // mount time keep it, so time-conditioned state (decay, leases,
+      // liveness) survives a reboot instead of re-stamping at boot.
+      seq.mount(entry.op, entry.path, entry.value,
+        entry.time !== undefined ? { time: entry.time } : undefined);
     }
   }
 

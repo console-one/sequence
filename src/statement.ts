@@ -47,6 +47,11 @@ export type MountEntry = {
   readonly op: StatementOp;
   readonly path: string;
   readonly value: unknown;
+  /** When this entry was originally mounted, for time-faithful replay.
+   *  Absent on live writes (the kernel stamps its clock); persistence
+   *  layers should record `Block.time` here so a store rebooted from
+   *  its own entry log does not re-stamp history with boot time. */
+  readonly time?: number;
 };
 
 
@@ -55,6 +60,13 @@ export type BlockOpts = {
   readonly where?: readonly Constraint[];
   readonly while?: readonly Constraint[];
   readonly onBreakPath?: string;
+  /** Explicit block time — when this write became true, on the
+   *  author's clock. Honored only at the OUTERMOST mount of a cascade
+   *  (nested mounts reuse the frozen cascade time so `_rt` stays
+   *  consistent across one fixpoint). Time is an input of the
+   *  transition: replay and cross-kernel receipt pass the original
+   *  instant here instead of letting the kernel re-sample its clock. */
+  readonly time?: number;
   /** Identity of the actor that created this block (for audit/permissions). */
   readonly author?: string;
   /**
