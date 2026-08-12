@@ -1,5 +1,5 @@
 -- Labelled Task Queue
--- Realizes: packages/core/specs/requirements/taskmanagement/labelledtaskqueue.md
+-- Realizes: specs/requirements/taskmanagement/labelledtaskqueue.md
 --
 -- A task queue where workers submit typed work items, claim them
 -- exclusively, and complete them with typed output. The path of each

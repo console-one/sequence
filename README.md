@@ -89,6 +89,14 @@ The tutorial below teaches the ft *language* and the shared vocabulary
 on the v1 engine — the language layer is the same under both; the
 engine-level write API differs as above.
 
+**The two-engine state is a migration, not an architecture, and it
+ends.** The v1 engine's root exports carry `@deprecated`; `./v1` is
+the stable alias for anyone not ready; the root flips to v2 at 0.4.0
+and the v1 engine is deleted the minor after. The staged plan — what
+lives (the shared vocabulary), what dies, and the named capability
+gaps still holding the flip open — is
+[specs/docs/DELETION_LEDGER.md](specs/docs/DELETION_LEDGER.md).
+
 ## Why this exists
 
 Ordinary type systems can't answer the questions agent systems ask:
@@ -163,6 +171,17 @@ npm run examples        # 7 self-asserting demos, fail-fast
 node examples/bench.mjs # reproducible numbers — including the honest scaling curve (#1)
 ```
 
+**[The host contract](specs/docs/HOST_CONTRACT.md)** — the kernel is
+an evaluation semantics, not a runtime. Time, identity, durability,
+and distance are the embedding host's to provide; this document is the
+checklist of what "correctly" means, so each obligation is declared
+instead of discovered by incident.
+
+**[The glossary](specs/docs/GLOSSARY.md)** — this package grew its own
+words; every one has a standard name (lattice meet, materialized view,
+shadow prices, outbox record…). One table bridges them, so you can
+evaluate the design in vocabulary you already own.
+
 **Design record** — `specs/docs/` (architecture, axioms, the DSL spec,
 [tool compilation & vending](specs/docs/TOOL_COMPILATION_VENDING.md))
 and `specs/impl/` (113 requirement files in narrative+ft from the
@@ -178,6 +197,17 @@ grammar regressions *and* on unrecorded progress.
 4. Laws, cost curves, docs, readers, sessions: all data on the same log.
 5. Compression reports its losses: evictions, omissions, and expansions are spoken, never silent.
 6. Honesty fails closed: no dependency model → worst-case bound; no coverage → say so.
+
+## What the host provides
+
+The kernel judges; the host situates. Four things never come from this
+package — the clock (pass `time` on writes; fire the `nextWake`s), the
+principal (`author` is a trusted input — authenticate it upstream or
+your admission laws are theater), the storage (persist blocks, replay
+them time-faithfully), and the wire (same-owner log shipping only;
+between sovereigns, vend contracts — never state). The full checklist,
+with what breaks when each is skipped:
+[specs/docs/HOST_CONTRACT.md](specs/docs/HOST_CONTRACT.md).
 
 ## Status
 

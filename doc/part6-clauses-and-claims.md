@@ -111,8 +111,9 @@ heartbeats move.
 
 The semantics for every clause above are implemented and enforced. The
 *grammar* still has gaps against the April 2026 design — the recovered
-design corpus itself now measures them: 98 of 113 spec files under
-`specs/impl/` use syntax the parser doesn't accept yet, and
+design corpus itself now measures them: 14 of 113 spec files under
+`specs/impl/` use syntax the parser doesn't accept yet (down from 98
+when this corpus was recovered), and
 `PARSE_LEDGER.json` pins that list as a ratchet (a ledgered file that
 *starts* parsing fails the suite until the progress is recorded). The
 notable gaps: call-path LHS identity clauses, ordered `[ ]` blocks,

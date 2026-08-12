@@ -1,6 +1,66 @@
 # Changelog
 
-## [0.2.0] — unreleased
+## [Unreleased]
+
+### Added
+- **Time is an input of the transition, not a sample.** v2:
+  `InsertInput.time` — a caller passes the instant a fact became true
+  on the author's clock. v1: `BlockOpts.time` (honored at the
+  outermost mount; nested cascade frames keep the frozen `_rt`) and
+  `MountEntry.time`, which `loadEnv` replays — a store rebooted from
+  its own entry log keeps history's instants instead of re-stamping
+  everything with boot time.
+- **The federation wire is honest.** Retractions forward as
+  `op:'invalidate'` (un-saying travels; a peer's copy no longer
+  outlives the owner's withdrawal). Every `Outgoing` carries a
+  per-store monotonic `seq` (a hole = a lost message, detectable) and
+  `sentAt` (the authored instant on the sender's clock, which
+  `receiveFromPeer` preserves — there is no shared clock). The module
+  header now states the scope: same-owner log shipping between one
+  sovereign's processes; between sovereigns, vend contracts, never
+  state.
+- **[The host contract](specs/docs/HOST_CONTRACT.md)** — time,
+  identity, durability, distance: what the embedding host must
+  provide, declared instead of discovered by incident. And
+  **[the glossary](specs/docs/GLOSSARY.md)** — the internal
+  vocabulary bridged to its standard names.
+- Previously implemented-but-unexported v2 surface is now importable:
+  `installTool`, `installBlueprint`, `installBlueprintGapsReader`,
+  `installKit`, `installBlueprintOutput`, `installAgentPrompt`,
+  `installProposalHandler`, `installRefundRule`, `budgetedEvaluator`,
+  `stampSessionToken` (+ `BlueprintGapSpec`, `GapEntry`,
+  `SessionLifecycleConfig`, `AuthCapsConfig`). `survival` is now
+  exported from the package root, as the README always claimed.
+
+### Changed
+- **The v1 engine is now formally dying.**
+  [DELETION_LEDGER.md](specs/docs/DELETION_LEDGER.md) consolidates the
+  staged migration (S1–S8): v1-engine root exports carry
+  `@deprecated`, a `./v1` subpath is the stable alias through the
+  transition, the root export flips to v2 at 0.4.0, and the engine is
+  deleted the minor after — the shared vocabulary (types, lattice,
+  builder, hoister, ft parser) stays at the root throughout. The S6
+  section names every capability gap still holding the flip open.
+- `src-v2/stdlib.ts` split into concern modules under
+  `src-v2/stdlib/` (partition, concreteness, commitments, reliability,
+  index-spec, planner, federation, negotiation, blueprint,
+  auth-session, render, snapshot, …). The barrel re-exports everything;
+  no import path or behavior changes.
+
+- Examples 01–04 now run on the v2 kernel (02–04 were pure shared
+  vocabulary; 01 demonstrates the `typeSpecificity` substitution for
+  v1's scalar `concreteness`). 05/06/07/bench stay on v1 pending the
+  S6 gaps the ledger names — including two found by this port: v2 has
+  no scalar concreteness, and v2's vend never reads
+  `docPrelude`/`doc` type annotations (text `[[label]]` markers only).
+
+### Fixed
+- Doc drift: 0.2.0 dated (it shipped 2026-07-27); part 6's grammar-gap
+  figure updated 98 → 14 (the ledger's current state); architecture-doc
+  count 10 → 15; a pre-extraction monorepo path in
+  `stdlib/taskqueue.ft`.
+
+## [0.2.0] — 2026-07-27
 
 The engine release: sequence becomes a standalone tool-compilation
 engine for running many LLM agents against one governed surface.
@@ -32,7 +92,7 @@ engine for running many LLM agents against one governed surface.
   its claim and exits non-zero if it breaks; the bench prints the
   honest mount-scaling curve ([#1](https://github.com/console-one/sequence/issues/1)).
 - **The design corpus, recovered** (`specs/impl/`, 113 requirement
-  files + 10 architecture docs from the April 2026 design record) with
+  files + 15 architecture docs from the April 2026 design record) with
   `PARSE_LEDGER.json` as a ratchet: grammar regressions fail CI, and so
   does unrecorded progress.
 - `prepare` script so git-pinned installs self-build.

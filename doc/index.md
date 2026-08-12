@@ -27,6 +27,18 @@ render the store are all mounts on the same log. There is a text form —
 the **ft language** — that round-trips with the store: what you can
 mount from text, the store can emit back as text.
 
+**Which engine is this tutorial about?** The package ships two (see
+the README's "Two engines, one vocabulary"). Parts 1–6 teach the ft
+*language* and the shared type vocabulary — identical under both
+engines. Part 7 and every code sample here use the **v1** write API
+(`mount`/`receive` from the package root); the v2 kernel
+(`@console-one/sequence/v2` — where new work lands) has the same
+language with a different write surface (`insert`/`receiveDocument`),
+shown in the README's opening example and specified in
+[TOOL_COMPILATION_VENDING](../specs/docs/TOOL_COMPILATION_VENDING.md).
+Translate as you read: `mount('bind', p, v)` ≈ `insert({ path: p,
+value: v })`.
+
 Fair warning: some of this will feel inverted at first (the type system
 is *runtime data*; "compiling" is mounting). The tutorial builds up in
 small steps, and every code block below is real — the ft blocks in these
