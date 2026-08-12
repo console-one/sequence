@@ -2,25 +2,27 @@
 //
 // A schema is a loose type. A value is a maximally concrete type. Binding
 // a value doesn't leave the type system — it moves along the same axis,
-// measured by `concreteness` (0 = anything, 1 = fully determined).
+// measured by `typeSpecificity` (0 = anything, 1 = fully determined).
 // `compose` is the lattice meet: it can only narrow, never loosen.
+// (v1's scalar `concreteness(path)` composite is an S6 gap in the
+// deletion ledger; the claim here needs only the shared lattice.)
 import {
   Sequence, FT, compose, typeSpecificity, isNever,
-} from '@console-one/sequence';
+} from '@console-one/sequence/v2';
 import { assert } from './_assert.mjs';
 
 console.log('01-continuum — a value IS a maximally concrete type');
 
 // A store with a schema (loose) and then a value (concrete).
 const seq = new Sequence();
-seq.mount('schema', 'count', FT.number());
-const loose = seq.concreteness('count');
+seq.insert({ path: 'count', type: FT.number().toType() });
+const loose = typeSpecificity(seq.typeAt('count'));
 
-seq.mount('bind', 'count', 42);
-const bound = seq.concreteness('count');
+seq.insert({ path: 'count', value: 42 });
+const bound = typeSpecificity(FT.number(42).toType());
 
-assert(loose < 1, `schema alone is not concrete (concreteness ${loose})`);
-assert(bound === 1, 'binding a value reaches concreteness 1 — the value is the most specific type');
+assert(loose < 1, `schema alone is not concrete (specificity ${loose})`);
+assert(bound === 1, 'a bound value reaches specificity 1 — the value is the most specific type');
 assert(seq.get('count') === 42, 'and the value reads back');
 
 // compose() only narrows. Meet of two constraints is tighter than either.

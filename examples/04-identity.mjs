@@ -7,7 +7,7 @@
 // step. covers() then checks whether a candidate satisfies a claim.
 import {
   FT, backwardInfer, covers, properties,
-} from '@console-one/sequence';
+} from '@console-one/sequence/v2';
 import { assert } from './_assert.mjs';
 
 console.log('04-identity — deriving required inputs from a required output');

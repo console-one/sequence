@@ -6,7 +6,7 @@
 //     of stochastic steps finish before the window closes? The dependency
 //     model is explicit; when it is missing the answer fails CLOSED to a
 //     conservative bound rather than silently assuming independence.
-import { evidenceDecay, planFeasibility } from '@console-one/sequence';
+import { evidenceDecay, planFeasibility } from '@console-one/sequence/v2';
 import { assert } from './_assert.mjs';
 
 console.log('03-temporal — aging beliefs and deadline-feasible plans');

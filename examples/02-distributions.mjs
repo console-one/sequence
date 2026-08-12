@@ -8,7 +8,7 @@
 // this call 95% likely to be done?" via the inverse CDF.
 import {
   conjugateUpdate, posteriorPredictive, cdf, cdfInverse,
-} from '@console-one/sequence';
+} from '@console-one/sequence/v2';
 import { assert } from './_assert.mjs';
 
 console.log('02-distributions — a tool call priced as a learned curve');
