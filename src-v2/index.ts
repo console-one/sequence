@@ -121,6 +121,29 @@ export {
   installStdLib,
 } from './stdlib';
 
+// ─── Stdlib — blueprint / kit / tool / proposal installers ──────────────
+// Implemented and tested since the blueprint pass but never re-exported —
+// unreachable from the published package until now. Each is the same
+// install* shape as the block above.
+export {
+  installTool,
+  installBlueprint,
+  installBlueprintGapsReader,
+  installKit,
+  installBlueprintOutput,
+  installAgentPrompt,
+  installProposalHandler,
+  installRefundRule,
+  budgetedEvaluator,
+  stampSessionToken,
+} from './stdlib';
+export type {
+  BlueprintGapSpec,
+  GapEntry,
+  SessionLifecycleConfig,
+  AuthCapsConfig,
+} from './stdlib';
+
 // ─── Stdlib — async lifecycle + clock ───────────────────────────────────
 export {
   flushPending,
