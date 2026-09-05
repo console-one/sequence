@@ -616,7 +616,21 @@ export class Sequence {
    *  name, etc.) so observers can address a specific peer's log. */
   readonly identity: string;
 
+  /** WHICH ENGINE: this is the DEPRECATED v1 engine; the kernel is
+   *  `@console-one/sequence/v2`. Warn once per process so a consumer on
+   *  the wrong engine announces itself (CLAUDE.md · DELETION_LEDGER).
+   *  `SEQUENCE_V1_SILENT=1` suppresses it for the named S4 holdouts. */
+  private static v1WarnedOnce = false;
+
   constructor(clock?: () => number, initial?: MountEntry[], identity?: string) {
+    if (!Sequence.v1WarnedOnce && !process.env.SEQUENCE_V1_SILENT) {
+      Sequence.v1WarnedOnce = true;
+      console.warn(
+        "[@console-one/sequence] v1 engine constructed (package-root `Sequence`). " +
+        "The kernel is `@console-one/sequence/v2`; v1 is deprecated and scheduled for deletion " +
+        "(specs/docs/DELETION_LEDGER.md). Set SEQUENCE_V1_SILENT=1 to silence.",
+      );
+    }
     this.clock = clock ?? (() => Date.now());
     this.identity = identity ?? randomIdentity();
     // Bootstrap partition rules as readable values — the Sequence

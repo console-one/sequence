@@ -8,6 +8,16 @@ are one continuum.**
 [![CI](https://github.com/console-one/sequence/actions/workflows/ci.yml/badge.svg)](https://github.com/console-one/sequence/actions/workflows/ci.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
+> **WHICH ENGINE?** This package ships two engines and one shared vocabulary.
+> **`@console-one/sequence/v2` is the kernel — use it.** The package root
+> exports the deprecated v1 engine (`mount`/`receive`, kept only while
+> consumers migrate; it warns once at construction) **plus** the shared
+> vocabulary both engines use (types, compose, the FT builder, the hoister,
+> the ft parser). Grep `src-v2/` for kernel behaviour; `src/sequence.ts`
+> is v1. What is done, pending, and still holding the root flip open is
+> tracked in [`specs/docs/DELETION_LEDGER.md`](specs/docs/DELETION_LEDGER.md).
+> Full delineation: [`CLAUDE.md`](CLAUDE.md) · [Two engines, one vocabulary](#two-engines-one-vocabulary).
+
 Mount your tools and their documentation as data. The kernel *compiles*
 a surface for each agent — an ft-language document under that agent's
 token budget, with narrative variants elected by budget, a session id,
