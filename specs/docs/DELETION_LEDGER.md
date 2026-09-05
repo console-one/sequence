@@ -76,6 +76,11 @@ What still keeps v1 alive, feature by feature:
   write and a refused write are indistinguishable to the caller, and
   law-style rejection reasons have no field to land in. Porting the
   law tests (example 05) requires this shape first.
+- **Post-write observer hook.** CLOSED 2026-09-05: v2 `Sequence.onInsert(observer)`
+  runs after every outer insert settles with the full `InsertResult` — the
+  v2 half of HOST_CONTRACT §3's hook (v1 `onBlockApplied`). Observers are
+  host-side, never facts, never replayed. First consumer: observatory-app's
+  session-contracts (per-session delivery over settled deltas).
 - **`rotate` (tiered storage with redirects).** No v2 equivalent.
   Decide: port as a stdlib feature, or waive with rationale.
 - **`law()` admission/read rules.** v2 guards + writer-authority claim
