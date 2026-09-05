@@ -175,6 +175,8 @@ export class Sequence {
   private root: Cell = makeCell('');
   private clock: () => number;
   private nextSeq = 0;
+  /** Post-settle observers (`onInsert`) — host-side, never part of the fold. */
+  private insertObservers: Array<(result: InsertResult) => void> = [];
 
   /** Watcher index: glob prefix → rule ids. Populated by installRule for
    *  rules that declare `watching`. Lookup fires rules on any change under
@@ -217,7 +219,31 @@ export class Sequence {
     };
     const changes: Delta[] = [];
     const suspended = !this.step(block, null, changes);
-    return { block, changes, suspended };
+    const result: InsertResult = { block, changes, suspended };
+    for (const observer of this.insertObservers) observer(result);
+    return result;
+  }
+
+  /**
+   * Register an observer that runs after every outer `insert` SETTLES —
+   * after propagation reached fixpoint — with the full `InsertResult`
+   * (the flattened cascade in application order). The v2 half of the
+   * host contract's post-write observer hook (v1: `onBlockApplied`,
+   * HOST_CONTRACT §3). Returns the unregister function.
+   *
+   * Observers are OUTSIDE the engine: not facts, not rules, never
+   * replayed, and they cannot write state through this call — an
+   * observer that inserts starts a new outer insert with its own settle
+   * (and its own observer pass; loops are the observer's to prevent).
+   * An observer's throw propagates to the inserter — deliver defensively
+   * on the observer's side; nothing is swallowed here.
+   */
+  onInsert(observer: (result: InsertResult) => void): () => void {
+    this.insertObservers.push(observer);
+    return () => {
+      const i = this.insertObservers.indexOf(observer);
+      if (i >= 0) this.insertObservers.splice(i, 1);
+    };
   }
 
   // ─── public reads ─────────────────────────────────────────────────

@@ -411,3 +411,33 @@ describe('cycle + fixpoint', () => {
     expect(fires).toBe(1);
   });
 });
+
+describe('post-settle observers (onInsert)', () => {
+  test('observer sees the full settled cascade of one outer insert, once, after fixpoint', () => {
+    const s = new Sequence();
+    const seen: Array<{ seq: number; paths: string[] }> = [];
+    const off = s.onInsert((r) => seen.push({ seq: r.block.seq, paths: r.changes.map((d) => d.path) }));
+    // a derived cell so one insert cascades into two deltas
+    s.insert({ path: 'b', type: createType('number', [derived('double', 'a')]) });
+    s.impls.set('double', (a: number) => a * 2);
+    seen.length = 0;
+    const r = s.insert({ path: 'a', value: 2 });
+    expect(seen).toHaveLength(1);
+    expect(seen[0].seq).toBe(r.block.seq);
+    expect(seen[0].paths).toEqual(r.changes.map((d) => d.path));
+    expect(seen[0].paths).toContain('a');
+    expect(seen[0].paths).toContain('b');
+    off();
+    s.insert({ path: 'a', value: 3 });
+    expect(seen).toHaveLength(1);
+  });
+
+  test('a suspended insert is observed with no changes; the observer never becomes a fact', () => {
+    const s = new Sequence();
+    const seen: boolean[] = [];
+    s.onInsert((r) => seen.push(r.suspended));
+    s.insert({ path: 'x', value: 1, where: [{ op: 'exists', args: ['never'] }] });
+    expect(seen).toEqual([true]);
+    expect(s.keys('')).not.toContain('_observers');
+  });
+});

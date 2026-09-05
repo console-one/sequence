@@ -20,7 +20,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { Sequence } from '../sequence';
 import { vend, continueSession, expand, revend, callThroughSession, mergeFrames } from '../vend';
-import { electFrame } from '../elect-frame';
+import { electFrame, extendSession } from '../elect-frame';
 import { declareConcern } from '../case';
 import { receiveDocument } from '../receive-doc';
 import { timeHorizon } from '../validity';
@@ -206,6 +206,30 @@ describe('vending end state — held on the v2 kernel', () => {
       expect(out.text).not.toContain('fs.write = ');
       expect(out.expiresAt).toBe(r.expiresAt);
     }
+  });
+
+  scenario('V20', 'extend: a live session moves its expiry by one write, the frame untouched; expired/unknown/invalid refused by name', async () => {
+    const clock = { t: 1_000_000 };
+    const seq = engine(clock);
+    const r = vend(seq, { ttlMs: 60_000 });
+    expect(r.text).toContain(`_sessions.${r.sessionId}.extend = (ttlMs: number) -> { ok: boolean, expiresAt: number }`);
+    const frameBefore = seq.get(`_sessions.${r.sessionId}.frame`);
+    clock.t += 50_000;
+    const seen: Array<{ path: string; prev: unknown; next: unknown }> = [];
+    seq.onInsert((res) => res.changes.forEach((d) => seen.push({ path: d.path, prev: d.prev, next: d.next })));
+    const ext = extendSession(seq, r.sessionId, 60_000);
+    expect(ext).toEqual({ ok: true, expiresAt: 1_110_000 });
+    expect(seen).toEqual([{ path: `_sessions.${r.sessionId}.expiresAt`, prev: 1_060_000, next: 1_110_000 }]);
+    expect(seq.get(`_sessions.${r.sessionId}.frame`)).toBe(frameBefore);
+    // the impl the contract names is the same endpoint
+    const viaImpl = (seq.impls.get(`_sessions.${r.sessionId}.extend`) as (i: unknown) => unknown)({ ttlMs: 1_000 });
+    expect(viaImpl).toEqual({ ok: true, expiresAt: 1_051_000 });
+    clock.t += 20_000; // past the original expiry, inside the (last) extension? no: 1_070_000 > 1_051_000
+    expect(await continueSession(seq, r.sessionId, 'x = 1')).toEqual({ ok: false, reason: 'expired' });
+    expect(extendSession(seq, r.sessionId, 60_000)).toEqual({ ok: false, reason: 'expired' });
+    expect(extendSession(seq, 'nope', 60_000)).toEqual({ ok: false, reason: 'unknown-session' });
+    const r2 = vend(seq, { ttlMs: 60_000 });
+    expect(extendSession(seq, r2.sessionId, 0)).toEqual({ ok: false, reason: 'invalid-ttl' });
   });
 
   scenario('V10', 'the scripted-agent loop: read → expand → install → re-vend, end to end (operator-scripted, not model cognition)', async () => {

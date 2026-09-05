@@ -525,6 +525,7 @@ export function electFrame(seq: Sequence, req: FrameRequest): FrameResult {
   emit(`_sessions.${sessionId}.expiresAt = ${expiresAt}`);
   emit(`_sessions.${sessionId}.continue = (ft: string) -> { ok: boolean }`);
   emit(`_sessions.${sessionId}.expand = (token: string) -> { content: string, costTokens: number }`);
+  emit(`_sessions.${sessionId}.extend = (ttlMs: number) -> { ok: boolean, expiresAt: number }`);
 
   // The duals, INTO the frame: one price fact per DECLARED capacity
   // dimension — the frame carries its own attention prices, receivable
@@ -565,6 +566,10 @@ export function electFrame(seq: Sequence, req: FrameRequest): FrameResult {
     const token = (input as { token?: string })?.token ?? (typeof input === 'string' ? input : '');
     return expand(seq, sessionId, token);
   });
+  seq.impls.set(`${base}.extend`, (input: unknown) => {
+    const ttlMs = (input as { ttlMs?: number })?.ttlMs ?? (typeof input === 'number' ? input : NaN);
+    return extendSession(seq, sessionId, ttlMs);
+  });
 
   const chainReports = [...chainSessions].map((session) => ({
     session,
@@ -593,6 +598,29 @@ export type ContinueResult =
 export function sessionExpiry(seq: Sequence, sessionId: string): number | undefined {
   const v = seq.get(`_sessions.${sessionId}.expiresAt`);
   return typeof v === 'number' ? v : undefined;
+}
+
+export type ExtendResult =
+  | { ok: true; expiresAt: number }
+  | { ok: false; reason: 'unknown-session' | 'expired' | 'invalid-ttl' };
+
+/** The extend endpoint's kernel half: a LIVE session's expiry moves to
+ *  now + ttlMs — one value delta on `_sessions.<id>.expiresAt`, the only
+ *  session fact that was write-once before this. The frame snapshot is
+ *  untouched (V9's law: same contract, later expiry); an expired or
+ *  unknown session cannot be revived by name. Hosts bind this to their
+ *  transport like `continue`/`expand`; the office's expiry task and its
+ *  client-callable extension both ride this one write. The bound is a
+ *  stamped constant here — deriving it from the surface's forecast is
+ *  the host's open item, not this endpoint's. */
+export function extendSession(seq: Sequence, sessionId: string, ttlMs: number): ExtendResult {
+  const expiresAt = sessionExpiry(seq, sessionId);
+  if (expiresAt === undefined) return { ok: false, reason: 'unknown-session' };
+  if (seq.now() > expiresAt) return { ok: false, reason: 'expired' };
+  if (!(Number.isFinite(ttlMs) && ttlMs > 0)) return { ok: false, reason: 'invalid-ttl' };
+  const next = seq.now() + ttlMs;
+  seq.insert({ path: `_sessions.${sessionId}.expiresAt`, value: next });
+  return { ok: true, expiresAt: next };
 }
 
 /** The continue endpoint's kernel half: ft issued against a session is

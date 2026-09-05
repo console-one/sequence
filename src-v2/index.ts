@@ -255,8 +255,8 @@ export type { ReceiveDocResult } from './receive-doc';
 // the tools-weighted degenerate case.
 export { declareConcern, readConcern, caseWalk, cellTimeBound } from './case';
 export type { ConcernSpec, ConcernValueWeights, CaseInput, CaseYield } from './case';
-export { electFrame, renderFactValue } from './elect-frame';
-export type { FrameRequest, FrameResult } from './elect-frame';
+export { electFrame, renderFactValue, extendSession, sessionExpiry } from './elect-frame';
+export type { FrameRequest, FrameResult, ExtendResult } from './elect-frame';
 
 // ─── Vending — tool compilation for clients, on THE kernel ──────────────
 // v2 re-base of src/vend.ts (deletion-ledger direction: the v1 module
