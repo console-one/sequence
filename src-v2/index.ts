@@ -256,6 +256,8 @@ export type { ReceiveDocResult } from './receive-doc';
 export { declareConcern, readConcern, caseWalk, cellTimeBound } from './case';
 export type { ConcernSpec, ConcernValueWeights, CaseInput, CaseYield } from './case';
 export { electFrame, renderFactValue, extendSession, sessionExpiry } from './elect-frame';
+export { updateTrend, expiryFromTrajectory, withinTolerance, TOLERANCE_DEFAULT, EXPIRY_MIN_MS, TREND_MIN_SAMPLES } from './trajectory';
+export type { Trend, ExpiryBasis } from './trajectory';
 export type { FrameRequest, FrameResult, ExtendResult } from './elect-frame';
 
 // ─── Vending — tool compilation for clients, on THE kernel ──────────────

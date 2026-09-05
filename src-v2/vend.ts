@@ -39,6 +39,7 @@ import { receiveDocument } from './receive-doc';
 import { receiveCall } from './receive-calls';
 import { declareConcern } from './case';
 import { electFrame, sessionExpiry, quote } from './elect-frame';
+import { updateTrend } from './trajectory';
 
 export {
   electLabel, continueSession, expand,
@@ -311,7 +312,12 @@ export async function mergeFrames(docs: string[]): Promise<MergeFramesResult> {
 export function observeToolCall(seq: Sequence, path: string, dtMs: number, ok: boolean): void {
   const relPath = `${path}._prior.reliability`;
   const rel = (seq.get(relPath) as { alpha?: number; beta?: number } | undefined) ?? { alpha: 1, beta: 1 };
-  seq.insert({ path: relPath, value: conjugateUpdate('beta', rel, ok ? 'success' : 'failure') });
+  const relNext = conjugateUpdate('beta', rel, ok ? 'success' : 'failure') as { alpha?: number; beta?: number };
+  seq.insert({ path: relPath, value: relNext });
+  // THE TRAJECTORY (trajectory.ts): the posterior mean's slope over real
+  // time, so a surfaced contract's expiry can be derived, not stamped.
+  const now = seq.now();
+  updateTrend(seq, `${path}._prior.reliabilityTrend`, (relNext.alpha ?? 1) / ((relNext.alpha ?? 1) + (relNext.beta ?? 1)), now);
 
   const latPath = `${path}._prior.latency`;
   const prev = seq.get(latPath) as
@@ -329,6 +335,7 @@ export function observeToolCall(seq: Sequence, path: string, dtMs: number, ok: b
       samples: (prev?.samples ?? 0) + 1,
     },
   });
+  updateTrend(seq, `${path}._prior.latencyTrend`, 1 / Math.max(rate, 1e-9), now);
 }
 
 /** Programmatic single-call convenience against a session frame: expiry

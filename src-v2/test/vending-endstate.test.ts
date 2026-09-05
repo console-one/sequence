@@ -19,7 +19,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { Sequence } from '../sequence';
-import { vend, continueSession, expand, revend, callThroughSession, mergeFrames } from '../vend';
+import { vend, continueSession, expand, revend, callThroughSession, mergeFrames, observeToolCall } from '../vend';
 import { electFrame, extendSession } from '../elect-frame';
 import { declareConcern } from '../case';
 import { receiveDocument } from '../receive-doc';
@@ -230,6 +230,30 @@ describe('vending end state — held on the v2 kernel', () => {
     expect(extendSession(seq, 'nope', 60_000)).toEqual({ ok: false, reason: 'unknown-session' });
     const r2 = vend(seq, { ttlMs: 60_000 });
     expect(extendSession(seq, r2.sessionId, 0)).toEqual({ ok: false, reason: 'invalid-ttl' });
+  });
+
+  scenario('V21', 'expiry is DERIVED from the surfaced tools\' trajectories; the ttl is the ceiling; the frame records what it surfaced', () => {
+    const clock = { t: 1_000_000 };
+    const seq = engine(clock);
+    // a stable tool keeps the ceiling
+    const r0 = vend(seq, { query: 'fs.read', ttlMs: 3_600_000 });
+    expect(r0.expiresAt).toBe(clock.t + 3_600_000);
+    expect((seq.get(`_sessions.${r0.sessionId}.expiry`) as { basis: string }).basis).toBe('ceiling');
+    expect(r0.text).toContain(`_sessions.${r0.sessionId}.tolerance = 0.1`);
+    // drive fs.read's reliability down over hours; the next vend is bounded by its slope
+    const H = 3_600_000;
+    for (let i = 0; i < 4; i++) { clock.t += H; observeToolCall(seq, 'fs.read', 20, true); }
+    for (let i = 0; i < 4; i++) { clock.t += H; observeToolCall(seq, 'fs.read', 20, false); }
+    const r1 = vend(seq, { query: 'fs.read', ttlMs: 24 * H });
+    expect(r1.expiresAt).toBeLessThan(clock.t + 24 * H);
+    expect(r1.expiresAt).toBeGreaterThanOrEqual(clock.t + 60_000);
+    const ex = seq.get(`_sessions.${r1.sessionId}.expiry`) as { basis: string; boundBy?: string };
+    expect(ex.basis).toBe('trajectory'); expect(ex.boundBy).toBe('fs.read');
+    expect(r1.text).toContain(`fs.read._validUntil = ${r1.expiresAt}`);
+    expect(r1.text).toContain(`_sessions.${r1.sessionId}.expiryBoundBy = "fs.read"`);
+    const surfaced = seq.get(`_sessions.${r1.sessionId}.surfaced.fs.read`) as { reliability: number; latencyMs: number };
+    expect(surfaced.reliability).toBeGreaterThan(0); expect(surfaced.reliability).toBeLessThan(1);
+    expect(surfaced.latencyMs).toBeGreaterThan(0);
   });
 
   scenario('V10', 'the scripted-agent loop: read → expand → install → re-vend, end to end (operator-scripted, not model cognition)', async () => {

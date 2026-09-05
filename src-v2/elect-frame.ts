@@ -49,6 +49,7 @@ import { type Type, constraintOf } from '../src/type';
 import { conjugateUpdate } from '../src/compose';
 import { renderTypeFt } from '../src/hoist';
 import { timeHorizon } from './validity';
+import { expiryFromTrajectory, TOLERANCE_DEFAULT, type ExpiryBasis } from './trajectory';
 import { receiveDocument } from './receive-doc';
 import { selectUnderPrices, type SelectCandidate, type SelectCapacities } from './select';
 import { caseWalk, readConcern, type CaseYield, type ConcernSpec } from './case';
@@ -364,12 +365,19 @@ export type FrameRequest = {
    *  the EMISSION window (stub/omission machinery), distinct from the
    *  `tokens` capacity which prices the election itself. */
   maxTokens?: number;
-  /** Session validity in ms (default 1 hour). */
+  /** Session validity CEILING in ms (default 1 hour). The actual expiry is
+   *  derived from the surfaced tools' forecast trajectories when they
+   *  exist (trajectory.ts) and never exceeds this. */
   ttlMs?: number;
+  /** Tolerance on a surfaced quality (reliability absolute, latency
+   *  relative; default 0.1): the bound whose crossing ends the contract. */
+  tolerance?: number;
 };
 
 export type FrameResult = {
   sessionId: string;
+  /** How the expiry was set: bounded by a tool's trajectory, or the ttl ceiling. */
+  expiry: ExpiryBasis;
   /** The ft document — every load-bearing fact a statement. */
   text: string;
   /** Every path that committed into the frame (in path order). */
@@ -398,7 +406,9 @@ let frameCounter = 0;
 export function electFrame(seq: Sequence, req: FrameRequest): FrameResult {
   const now = seq.now();
   const ttl = req.ttlMs ?? 3_600_000;
-  const expiresAt = now + ttl;
+  const ceilingAt = now + ttl;
+  let expiresAt = ceilingAt;
+  const tolerance = req.tolerance ?? TOLERANCE_DEFAULT;
   const sessionId = req.session ?? `s${now.toString(36)}${(frameCounter++).toString(36)}`;
   const budget = req.maxTokens ?? Infinity;
   const capacities = req.capacities ?? {};
@@ -430,6 +440,22 @@ export function electFrame(seq: Sequence, req: FrameRequest): FrameResult {
   const admittedSet = new Set(sel.selected);
   const admitted = walked.filter((i) => admittedSet.has(i.path));
   const omitted: string[] = walked.filter((i) => !admittedSet.has(i.path)).map((i) => i.path);
+
+  // ── EXPIRY FROM THE TRAJECTORY (§14 item 13): the admitted tools'
+  //    forecast slopes bound the contract; the ttl is the ceiling. The
+  //    admitted fn blocks are re-rendered with the derived bound (only
+  //    the `_validUntil` number changes; the election's costs stand).
+  const expiry = expiryFromTrajectory(
+    seq,
+    admitted.filter((i) => i.type?.kind === 'fn').map((i) => i.path),
+    { now, ceilingMs: ceilingAt, tolerance },
+  );
+  if (expiry.basis === 'trajectory') {
+    expiresAt = expiry.expiresAt;
+    for (const item of admitted) {
+      if (item.type?.kind === 'fn') rendered.set(item.path, renderToolBlock(seq, item.path, item.type, sessionId, expiresAt));
+    }
+  }
 
   // ── commitment: document assembly, budget-aware (vend's, moved) ───
   const lines: string[] = [];
@@ -526,6 +552,8 @@ export function electFrame(seq: Sequence, req: FrameRequest): FrameResult {
   emit(`_sessions.${sessionId}.continue = (ft: string) -> { ok: boolean }`);
   emit(`_sessions.${sessionId}.expand = (token: string) -> { content: string, costTokens: number }`);
   emit(`_sessions.${sessionId}.extend = (ttlMs: number) -> { ok: boolean, expiresAt: number }`);
+  emit(`_sessions.${sessionId}.tolerance = ${tolerance}`);
+  if (expiry.basis === 'trajectory') emit(`_sessions.${sessionId}.expiryBoundBy = ${quote(expiry.boundBy)}`);
 
   // The duals, INTO the frame: one price fact per DECLARED capacity
   // dimension — the frame carries its own attention prices, receivable
@@ -541,6 +569,17 @@ export function electFrame(seq: Sequence, req: FrameRequest): FrameResult {
   seq.insert({ path: `${base}.createdAt`, value: now });
   seq.insert({ path: `${base}.expiresAt`, value: expiresAt });
   seq.insert({ path: `${base}.tools`, value: vended.join(' ') });
+  seq.insert({ path: `${base}.expiry`, value: expiry });
+  // What was SURFACED, per tool: the means a contract promised, so a
+  // consumer can judge a later posterior against the tolerance.
+  for (const tool of vended) {
+    const rel = seq.getCell(`${tool}._prior.reliability`)?.value as { alpha?: number; beta?: number } | undefined;
+    const lat = seq.getCell(`${tool}._prior.latency`)?.value as { rate?: number } | undefined;
+    const surfaced: Record<string, number> = {};
+    if (rel && typeof rel.alpha === 'number' && typeof rel.beta === 'number') surfaced.reliability = rel.alpha / (rel.alpha + rel.beta);
+    if (lat && typeof lat.rate === 'number' && lat.rate > 0) surfaced.latencyMs = 1 / lat.rate;
+    if (Object.keys(surfaced).length > 0) seq.insert({ path: `${base}.surfaced.${tool}`, value: surfaced });
+  }
   seq.insert({ path: `${base}.admitted`, value: committed.join(' ') });
   seq.insert({ path: `${base}.concern`, value: req.concern });
   if (req.client !== undefined) seq.insert({ path: `${base}.client`, value: req.client });
@@ -578,6 +617,7 @@ export function electFrame(seq: Sequence, req: FrameRequest): FrameResult {
 
   return {
     sessionId,
+    expiry,
     text: lines.join('\n'),
     admitted: committed,
     tools: vended,
