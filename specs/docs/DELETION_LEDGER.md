@@ -92,6 +92,57 @@ What still keeps v1 alive, feature by feature:
 - **v1 `vend`/`commitments`/`elect` namesakes.** v2 owns these
   concepts already; deletion here is consumer re-pointing only.
 
+## What the office design owes the kernel — K1–K11 (2026-09-06)
+
+Source: `observatory-app/docs/MAP-SERVER-REALITY-TARGET.md` §C v4 (C3), from
+the kernel audit `observatory-app/docs/_archive/2026-09-05-research/research-kernel.md`
+(145 rows: 56 encoded, 44 partial, 39 host seam). The office's low-level
+design is now ONE schema mounted through this kernel's `install*` calls plus
+six host seams; these are the kernel changes that design needs. Each is a
+concrete change to `src-v2/`, not an application layer.
+
+- **K1 · guard bindings.** Guards cannot bind `$author`/`$instancePath`;
+  `EmitterCtx.bindings` is declared and always `{}` (`sequence.ts:110–112`,
+  `:497`); `Rule.scope` is a literal prefix. Every per-owner law is a
+  TypeScript closure re-registered per host. The binding machinery exists
+  twice already (`index_spec`'s `bindFrom`, `evaluateConstraint`'s `$var`) —
+  route the guard path through it. Laws expressible as data then need no
+  per-law code.
+- **K2 · visibility in the frame.** `Type.meta.visibility` is enforced by
+  `hoist` and ignored by `caseWalk`/`electFrame`/`vend`.
+- **K3 · secrets out of the fold.** A secret is a cell guarded only by
+  `partition('id')` (`stdlib/auth-session.ts:381–385`); `captureSnapshot` and
+  `installCrossSequence` will serialize and forward it. A `secret` type kind
+  whose value is never captured, federated, or rendered; the fold holds a
+  fingerprint.
+- **K4 · refuse unregistered emitters.** `dispatchRule` silently no-ops when
+  `emitters.get(r.emit)` is missing (`sequence.ts:494–495`); a logged law a
+  host cannot run is ignored, not refused.
+- **K5 · rule retraction + enumeration.** `installRule` only pushes
+  (`sequence.ts:661–671`); no removal, no listing, no `rules` on
+  `SnapshotEntry`.
+- **K6 · snapshot carries `time` (and rules).** `SnapshotEntry` has no
+  `time`; restored blocks are re-stamped with the restorer's clock, so decay,
+  leases, heartbeat age and trends are not replay-stable — although
+  `InsertInput.time` exists precisely for faithful replay.
+- **K7 · a refusal names its reason.** A refused block is parked with
+  `status:'suspended'` and nothing records which rule or constraint refused;
+  `Block.cause` is set only for induced blocks.
+- **K8 · `installEndpointTool` refuses on a missing secret.** Today it drops
+  the header and calls the unauthenticated tier (`tools.ts:773–776`, `:828`).
+- **K9 · `index_spec` incremental + negative maintenance.** Re-projects every
+  class on every delta and never retracts a fact whose tuple stopped matching
+  (`stdlib/index-spec.ts:58–88`).
+- **K10 · private oracles.** The watcher index (disjointness) and
+  `nextSequence` are private; `_holders.*` posteriors never decay while
+  `evidenceDecay` is exported and unused.
+- **K11 · small defects.** `limit` documents `<`, implements `<=`
+  (`install.ts:62/66/86`); `json.decode` registered twice with disagreeing
+  contracts (`tools.ts:536`, `:574`); `auto-wire` header vs code on param
+  shape; `_process.workingSet.nextLikely` promised, never written;
+  `installCrossSequence` mounts two identities' rules at one fixed path
+  (`federation.ts:136–138`).
+
 ## Why the flip is allowed
 
 Pre-1.0, and the README says it plainly: APIs can move between minors,
