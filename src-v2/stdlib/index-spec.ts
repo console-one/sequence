@@ -25,42 +25,84 @@ type IndexSpecData = {
 };
 type Tuple = Record<string, unknown>;
 
+// ─── the registry of mounted classes ───────────────────────────────────
+//
+// The driver has to know which cells carry an index_spec constraint. It
+// used to find out by walking every cell of the fold on every change —
+// O(N_cells) per change, so a log replay cost O(rows × cells) and live
+// ingest paid a full walk per insert.
+//
+// A class appears at exactly one moment: when its schema lands, which is
+// the type delta Case A already sees. So Case A maintains this registry
+// and Case B iterates it. Nothing else is needed to know the set.
+//
+// The set is seeded once per Sequence, on the driver's first dispatch,
+// for classes that landed while this driver was not listening — a fold
+// restored with the driver uninstalled, the shape a host uses to keep a
+// replay off the projection path. That is ONE walk for the life of the
+// instance, not one per insert.
+//
+// Keyed by Sequence so it is per-instance, runtime-only, and collected
+// with the instance — the same shape as the other stdlib driver state
+// (federation.ts, commitments.ts).
+
+type ClassRegistry = { classes: Set<string>; seeded: boolean };
+
+const registries = new WeakMap<Sequence, ClassRegistry>();
+
+function registryFor(seq: Sequence): ClassRegistry {
+  let reg = registries.get(seq);
+  if (!reg) {
+    reg = { classes: new Set<string>(), seeded: false };
+    registries.set(seq, reg);
+  }
+  return reg;
+}
+
+/** One walk, once per Sequence: adopt classes that landed before this
+ *  driver was listening. Union, never replace — Case A may already have
+ *  registered classes that landed after install. */
+function seedRegistry(reg: ClassRegistry, seq: Sequence): void {
+  reg.seeded = true;
+  for (const c of seq.cells()) {
+    if (c.type && constraintOf(c.type, 'index_spec')) reg.classes.add(c.path);
+  }
+}
+
 export function indexSpecDriver(ctx: EmitterCtx): BlockTemplate[] {
   const { cell, delta, seq } = ctx;
+  const reg = registryFor(seq);
   const induced: BlockTemplate[] = [];
 
-  // Case A: a class schema just landed (its own type-change delta).
-  //   Register glob watches + fire bodies for current tuples.
+  // Case A: a class schema just landed (its own type-change delta) — the
+  // one moment a cell becomes a class or stops being one. The registry is
+  // maintained here; the bodies fire for the current tuples.
   if (delta.kind === 'type' && cell.type) {
     const spec = constraintOf(cell.type, 'index_spec');
     if (spec) {
-      const specData = spec.args[0] as IndexSpecData;
-      // Register glob watches on the kernel-level watcher index by
-      // installing a lightweight child rule at _rules.{cellPath} so
-      // future changes under bindFrom globs trigger this emitter.
-      // Alternative: use explicit subscription API if added. For v2
-      // initial, we rely on the global-watching `indexSpec.tick` rule.
-      induced.push(...fireBodies(cell.path, specData, seq));
+      reg.classes.add(cell.path);
+      induced.push(...fireBodies(cell.path, spec.args[0] as IndexSpecData, seq));
+    } else {
+      reg.classes.delete(cell.path);
     }
   }
 
-  // Case B: an ordinary cell change. Scan mounted index_spec classes.
-  // Since filter args can reference arbitrary paths (via value-bound
-  // vars, `_rt`, or cell-path templates), pre-determining watch
-  // prefixes is brittle. For correctness, re-project every class on
-  // every change. Idempotency is preserved by the kernel's same-value
-  // compose check — body writes that produce the same value as the
-  // current cell state don't cascade further.
+  // Case B: any cell change. Re-project every mounted class. Since filter
+  // args can reference arbitrary paths (via value-bound vars, `_rt`, or
+  // cell-path templates), pre-determining which class a given change can
+  // affect is brittle; re-projecting all of them is correct, and
+  // idempotent through the kernel's same-value compose check — body
+  // writes that produce the current value don't cascade further.
   //
-  // Performance: O(N_classes) per change. Acceptable for v2; a
-  // prefix-indexed registry + filter-path analysis is a later
-  // optimization.
-  for (const c of seq.cells()) {
-    if (!c.type) continue;
-    const spec = constraintOf(c.type, 'index_spec');
-    if (!spec) continue;
-    const specData = spec.args[0] as IndexSpecData;
-    induced.push(...fireBodies(c.path, specData, seq));
+  // Performance: O(N_classes) per change — which is now what the code
+  // does, not only what this comment says. The classes come from the
+  // registry above; the fold is not walked.
+  if (!reg.seeded) seedRegistry(reg, seq);
+  for (const classPath of reg.classes) {
+    const t = seq.typeAt(classPath);
+    const spec = t ? constraintOf(t, 'index_spec') : undefined;
+    if (!spec) { reg.classes.delete(classPath); continue; }
+    induced.push(...fireBodies(classPath, spec.args[0] as IndexSpecData, seq));
   }
 
   return induced;

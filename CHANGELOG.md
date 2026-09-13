@@ -55,6 +55,20 @@
   `docPrelude`/`doc` type annotations (text `[[label]]` markers only).
 
 ### Fixed
+- **v2 `index_spec` no longer walks the fold on every insert.** The
+  driver found the mounted classes with `for (const c of seq.cells())`
+  on every cell change — O(N_cells) per change, so a log replay cost
+  O(rows × cells) and live ingest paid a full walk per insert. Its own
+  comment already claimed O(N_classes). A class appears at exactly one
+  moment — when its schema lands — which is the type delta the driver's
+  Case A already handles, so Case A now maintains a per-`Sequence`
+  registry of class paths and Case B iterates that. The set is seeded by
+  one walk on the driver's first dispatch, for classes that landed while
+  the driver was not installed (a host that keeps a restore off the
+  projection path); that is one walk for the life of the instance. What
+  the driver projects is unchanged. Measured on the new
+  `index-spec-registry` tests: 10,000 inserts into a 5,000-cell fold with
+  3 classes, 11,640 ms and 10,000 walks → 235 ms and 0 walks.
 - Doc drift: 0.2.0 dated (it shipped 2026-07-27); part 6's grammar-gap
   figure updated 98 → 14 (the ledger's current state); architecture-doc
   count 10 → 15; a pre-extraction monorepo path in

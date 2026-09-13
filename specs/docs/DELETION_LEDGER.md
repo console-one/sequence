@@ -132,7 +132,14 @@ concrete change to `src-v2/`, not an application layer.
   the header and calls the unauthenticated tier (`tools.ts:773–776`, `:828`).
 - **K9 · `index_spec` incremental + negative maintenance.** Re-projects every
   class on every delta and never retracts a fact whose tuple stopped matching
-  (`stdlib/index-spec.ts:58–88`).
+  (`stdlib/index-spec.ts`, Case B). Half-closed 2026-09-13: the driver no
+  longer WALKS THE FOLD to find the classes — Case A maintains a per-`Sequence`
+  registry of class paths and Case B iterates it, so a change costs
+  O(N_classes) as the comment always claimed instead of O(N_cells) (a 30 s
+  profile of a host replaying its log put 95.7 % of CPU inclusive in this
+  driver, 75.3 % in `cells`/`walk`). Still open: re-projecting EVERY class on
+  every delta rather than the classes a change can affect, and the negative
+  half — a tuple that stops matching leaves its fact standing.
 - **K10 · private oracles.** The watcher index (disjointness) and
   `nextSequence` are private; `_holders.*` posteriors never decay while
   `evidenceDecay` is exported and unused.
