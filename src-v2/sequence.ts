@@ -444,14 +444,24 @@ export class Sequence {
     // suspended block exactly once per propagation step; if the retry
     // itself suspends, it stays in the log for the NEXT trigger to pick
     // up (not this one).
+    //
+    // THE RETRY REPLACES THE BLOCK IT RETRIES. The retry is pushed onto
+    // the same cell whether it applies or suspends again, so the original
+    // is removed once retried. Left in place it stayed 'suspended' beside
+    // its retry, and the next trigger retried both: 2^n copies after n
+    // changes to a watched cell. A real office parked one block on a
+    // guard whose cell changed every few seconds and went from 70 MB to
+    // past a 1 GB heap in three minutes (2026-09-24).
     const temOut = frame.cell.out.temporal;
     if (temOut) for (const wp of temOut) {
       if (frame.seen.has(wp)) continue;
       const watcher = this.findCell(wp);
       if (!watcher) continue;
       const snapshot = watcher.blocks.slice();
+      const retried = new Set<Block>();
       for (const b of snapshot) {
         if (b.status !== 'suspended') continue;
+        retried.add(b);
         const retry: Block = {
           ...b,
           seq: this.nextSeq++,
@@ -459,6 +469,11 @@ export class Sequence {
           cause: { from: frame.cell.path, axis: 'temporal' },
         };
         this.step(retry, frame, changes);
+      }
+      if (retried.size) {
+        let kept = 0;
+        for (const x of watcher.blocks) if (!retried.has(x)) watcher.blocks[kept++] = x;
+        watcher.blocks.length = kept;
       }
     }
 
